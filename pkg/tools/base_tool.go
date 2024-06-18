@@ -21,7 +21,7 @@ func NewBaseTool(config *config.ToolConfig) *BaseTool {
 }
 
 func (p *BaseTool) GetToolFolder() string {
-	return fmt.Sprintf("%s/%s/%s/%s", GetToolFolder(), runtime.GOOS, runtime.GOARCH, p.ToolName)
+	return fmt.Sprintf("%s/%s/%s/%s/%s", GetToolFolder(), runtime.GOOS, runtime.GOARCH, p.ToolName, p.Version)
 }
 
 func (p *BaseTool) GetToolPath() string {
