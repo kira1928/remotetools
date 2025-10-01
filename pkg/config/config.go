@@ -9,7 +9,7 @@ import (
 
 type ToolConfig struct {
 	ToolName    string
-	Version     string               `json:"version"`
+	Version     string
 	DownloadURL OsArchSpecificString `json:"downloadUrl"`
 	PathToEntry OsArchSpecificString `json:"pathToEntry"`
 }
@@ -88,13 +88,35 @@ func LoadConfig(path string) (conf Config, err error) {
 		return
 	}
 
-	// Unmarshal the JSON data into the config struct
-	err = json.Unmarshal(data, &conf.ToolConfigs)
+	// Unmarshal the JSON data into a temporary structure
+	// New format: {"toolName": {"version": {"downloadUrl": {}, "pathToEntry": {}}}}
+	var tempData map[string]map[string]struct {
+		DownloadURL OsArchSpecificString `json:"downloadUrl"`
+		PathToEntry OsArchSpecificString `json:"pathToEntry"`
+	}
+	
+	err = json.Unmarshal(data, &tempData)
 	if err != nil {
 		return
 	}
-	for toolName, toolConfig := range conf.ToolConfigs {
-		toolConfig.ToolName = toolName
+
+	// Convert to the internal structure
+	conf.ToolConfigs = make(map[string]*ToolConfig)
+	for toolName, versions := range tempData {
+		// For each version, create a separate key with toolName@version
+		for version, versionData := range versions {
+			key := toolName
+			if len(versions) > 1 {
+				// If multiple versions exist, use toolName@version as key
+				key = toolName + "@" + version
+			}
+			conf.ToolConfigs[key] = &ToolConfig{
+				ToolName:    toolName,
+				Version:     version,
+				DownloadURL: versionData.DownloadURL,
+				PathToEntry: versionData.PathToEntry,
+			}
+		}
 	}
 
 	return

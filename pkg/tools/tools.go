@@ -58,6 +58,26 @@ func (p *API) GetTool(toolName string) (tool Tool, err error) {
 	return
 }
 
+func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error) {
+	key := toolName + "@" + version
+	
+	var ok bool
+	if tool, ok = p.toolInstances[key]; ok && tool != nil {
+		return
+	}
+
+	if p.config.ToolConfigs == nil {
+		err = fmt.Errorf("config is not loaded")
+		return
+	}
+
+	if toolConfig, ok := p.config.ToolConfigs[key]; ok {
+		tool = NewDownloadTool(toolConfig)
+		p.toolInstances[key] = tool
+	}
+	return
+}
+
 func init() {
 	instance = &API{
 		toolInstances: make(map[string]Tool),
