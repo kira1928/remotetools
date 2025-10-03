@@ -1,0 +1,97 @@
+// Internationalization support
+const i18n = {
+    en: {
+        title: 'Remote Tools Manager',
+        loading: 'Loading tools...',
+        version: 'Version',
+        installed: 'Installed',
+        notInstalled: 'Not Installed',
+        installing: 'Installing...',
+        install: 'Install',
+        reinstall: 'Reinstall',
+        downloading: 'Downloading',
+        extracting: 'Extracting files...',
+        completed: 'Installation completed',
+        failed: 'Installation Failed',
+        error: 'Error',
+        failedToLoad: 'Failed to load tools'
+    },
+    zh: {
+        title: '远程工具管理器',
+        loading: '加载工具中...',
+        version: '版本',
+        installed: '已安装',
+        notInstalled: '未安装',
+        installing: '安装中...',
+        install: '安装',
+        reinstall: '重新安装',
+        downloading: '下载中',
+        extracting: '解压中...',
+        completed: '安装完成',
+        failed: '安装失败',
+        error: '错误',
+        failedToLoad: '加载工具失败'
+    }
+};
+
+// Get user's preferred language
+function getPreferredLanguage() {
+    // Check localStorage first
+    const saved = localStorage.getItem('language');
+    if (saved && (saved === 'en' || saved === 'zh')) {
+        return saved;
+    }
+    
+    // Check browser language
+    const browserLang = navigator.language || navigator.userLanguage;
+    if (browserLang.startsWith('zh')) {
+        return 'zh';
+    }
+    
+    return 'en';
+}
+
+// Set language
+function setLanguage(lang) {
+    currentLanguage = lang;
+    localStorage.setItem('language', lang);
+    
+    // Update all elements with data-i18n attribute
+    document.querySelectorAll('[data-i18n]').forEach(element => {
+        const key = element.getAttribute('data-i18n');
+        if (i18n[lang][key]) {
+            element.textContent = i18n[lang][key];
+        }
+    });
+    
+    // Update language buttons
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-lang') === lang);
+    });
+    
+    // Update HTML lang attribute
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+}
+
+// Get translation
+function t(key) {
+    return i18n[currentLanguage][key] || key;
+}
+
+// Initialize language
+let currentLanguage = getPreferredLanguage();
+
+// Set up language switcher when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+    setLanguage(currentLanguage);
+    
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            setLanguage(this.getAttribute('data-lang'));
+            // Re-render tools with new language
+            if (window.toolsData && window.toolsData.length > 0) {
+                renderTools(window.toolsData);
+            }
+        });
+    });
+});
