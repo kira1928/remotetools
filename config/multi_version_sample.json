@@ -25,17 +25,17 @@
     "8.0.4": {
       "downloadUrl": {
         "darwin": {
-          "amd64": "https://download.visualstudio.microsoft.com/download/pr/aed7b105-c462-4a0f-8f05-aed11367ba4d/0b40df8ac3e83f0d724dd42ceb3a6a14/dotnet-runtime-8.0.4-osx-x64.tar.gz",
-          "arm64": "https://download.visualstudio.microsoft.com/download/pr/c5e85e4f-0a1e-4fc7-a5be-a7bece6c4e46/eb3ee167fccfa9a2f78be8a92b1bec3e/dotnet-runtime-8.0.4-osx-arm64.tar.gz"
+          "amd64": "https://download.visualstudio.microsoft.com/download/pr/c999e42b-38c9-4d9a-9816-9a0ebece8afe/8e4471db5aa0756d812af23817b14259/dotnet-runtime-8.0.4-osx-x64.tar.gz",
+          "arm64": "https://download.visualstudio.microsoft.com/download/pr/d2cd56cc-5a78-460d-a45d-3893b020949d/8cf9653a23c91ac2b10c70f58edae60e/dotnet-runtime-8.0.4-osx-arm64.tar.gz"
         },
         "linux": {
-          "amd64": "https://download.visualstudio.microsoft.com/download/pr/ba3c77fd-daa7-42cd-acdd-9f55c03e0dd0/9d81dc9393a10efd0e5f2f96b5f476db/dotnet-runtime-8.0.4-linux-x64.tar.gz",
-          "arm": "https://download.visualstudio.microsoft.com/download/pr/0fa5e5df-9254-424a-85bd-bae0b6b9f87d/bf8e08f301fe2a26dd1a9f2b1a8aab46/dotnet-runtime-8.0.4-linux-arm.tar.gz",
-          "arm64": "https://download.visualstudio.microsoft.com/download/pr/6b346dd1-3b87-49ad-98fd-2382045dd048/e0d2c7c78d2b5b1ce9e47d1f7fc48de5/dotnet-runtime-8.0.4-linux-arm64.tar.gz"
+          "amd64": "https://download.visualstudio.microsoft.com/download/pr/a3ca3d31-f45b-4e53-ab4d-0f2f221cbc5b/47382078b4b72a66387d0fd6ed9ff963/dotnet-runtime-8.0.4-linux-x64.tar.gz",
+          "arm": "https://download.visualstudio.microsoft.com/download/pr/a299eeb3-a9c8-42d4-a0ff-61713365c715/0f4d4139df6c700efd4c0d172c2c28eb/dotnet-runtime-8.0.4-linux-arm.tar.gz",
+          "arm64": "https://download.visualstudio.microsoft.com/download/pr/761b252b-a0d9-41cd-b1ec-2dc33159c11c/b8285cf82db4ef340a191bfba9a9a73e/dotnet-runtime-8.0.4-linux-arm64.tar.gz"
         },
         "windows": {
-          "386": "https://download.visualstudio.microsoft.com/download/pr/ddde4c0d-8786-4fc9-b718-d5b88d3e66bc/c81510ff8d11e0c437e04ae8e50f7cd9/dotnet-runtime-8.0.4-win-x86.zip",
-          "amd64": "https://download.visualstudio.microsoft.com/download/pr/02e1f996-71c7-417d-ab82-51c7f5f0e3f3/4f55e6e6f5e3e3b6be0e9e8d26f1eeb6/dotnet-runtime-8.0.4-win-x64.zip"
+          "386": "https://download.visualstudio.microsoft.com/download/pr/2f00ad36-c625-4e11-b6e1-d91eef43488e/b6ec44780ed852fa498d4c4b7a43cf73/dotnet-runtime-8.0.4-win-x86.zip",
+          "amd64": "https://download.visualstudio.microsoft.com/download/pr/1ed8f8a2-7bb8-41cd-b256-63e0e7102742/d0c4851d34ddd0abf041188553a3acae/dotnet-runtime-8.0.4-win-x64.zip"
         }
       },
       "pathToEntry": {
