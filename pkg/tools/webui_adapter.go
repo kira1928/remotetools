@@ -71,3 +71,28 @@ func (a *webuiAdapter) UninstallTool(toolName, version string) error {
 	// Perform uninstallation
 	return tool.Uninstall()
 }
+
+// GetDownloadInfo returns partial download information
+func (a *webuiAdapter) GetDownloadInfo(toolName, version string) (int64, int64, error) {
+	tool, err := a.api.GetToolWithVersion(toolName, version)
+	if err != nil {
+		return 0, 0, err
+	}
+	// Only support DownloadedTool for partial download
+	if dt, ok := tool.(*DownloadedTool); ok {
+		return dt.GetPartialDownloadInfo()
+	}
+	return 0, 0, nil
+}
+
+// PauseTool triggers pausing download if supported
+func (a *webuiAdapter) PauseTool(toolName, version string) error {
+	tool, err := a.api.GetToolWithVersion(toolName, version)
+	if err != nil {
+		return err
+	}
+	if dt, ok := tool.(*DownloadedTool); ok {
+		return dt.Pause()
+	}
+	return nil
+}

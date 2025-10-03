@@ -1,18 +1,74 @@
-let eventSource = null;
+// 全局单一 SSE 连接与轮询器（尽量减少 HTTP/1.1 长连接）
+window.globalSSE = null;
+window.pollTimer = null;
 window.toolsData = [];
 
-// Initialize SSE connection
-function initSSE() {
-    eventSource = new EventSource('/api/progress');
-    
-    eventSource.onmessage = function(event) {
+function ensureSSE() {
+    if (window.globalSSE) return window.globalSSE;
+    // 建立单一 SSE 连接，接收所有工具的进度
+    const es = new EventSource('/api/progress');
+    window.globalSSE = es;
+
+    es.onmessage = function(event) {
         const progress = JSON.parse(event.data);
         updateProgress(progress);
+        // 任一任务结束后，检查后端是否还有活跃任务；若无则关闭 SSE
+        if (progress.status === 'completed' || progress.status === 'failed' || progress.status === 'uninstalled') {
+            maybeStopSSEIfNoActive();
+        }
     };
 
-    eventSource.onerror = function() {
+    es.onerror = function() {
         console.error('SSE connection error');
+        closeSSE();
+        startPollingActive();
     };
+
+    // 连接建立后可停止轮询
+    stopPollingActive();
+    return es;
+}
+
+function closeSSE() {
+    if (window.globalSSE) {
+        try { window.globalSSE.close(); } catch (e) {}
+        window.globalSSE = null;
+    }
+}
+
+async function maybeStopSSEIfNoActive() {
+    try {
+        const resp = await fetch('/api/active');
+        const data = await resp.json();
+        if (!data.needsSSE) {
+            closeSSE();
+            startPollingActive();
+        }
+    } catch (e) {
+        // 网络异常时保守不关闭 SSE
+    }
+}
+
+function startPollingActive(intervalMs = 5000) {
+    if (window.pollTimer || window.globalSSE) return; // 已有轮询或已经连上
+    window.pollTimer = setInterval(async function() {
+        try {
+            const resp = await fetch('/api/active');
+            const data = await resp.json();
+            if (data.needsSSE) {
+                ensureSSE();
+            }
+        } catch (e) {
+            // 忽略，下一次轮询再试
+        }
+    }, intervalMs);
+}
+
+function stopPollingActive() {
+    if (window.pollTimer) {
+        clearInterval(window.pollTimer);
+        window.pollTimer = null;
+    }
 }
 
 // Load tools list
@@ -66,12 +122,30 @@ function createToolCard(tool) {
     
     // Set install button - only show for non-installed tools
     const installBtnEl = clone.querySelector('.install-btn');
+    const pauseBtnEl = clone.querySelector('.pause-btn');
+    const resumeBtnEl = clone.querySelector('.resume-btn');
     const uninstallBtnEl = clone.querySelector('.uninstall-btn');
     
     installBtnEl.textContent = t('install');
+    pauseBtnEl.textContent = t('pause');
+    resumeBtnEl.textContent = t('resume');
     uninstallBtnEl.textContent = t('uninstall');
     
     installBtnEl.addEventListener('click', async function() {
+        try {
+            await installTool(tool.name, tool.version);
+        } catch (error) {
+            console.error(error);
+        }
+    });
+    pauseBtnEl.addEventListener('click', async function() {
+        try {
+            await pauseDownload(tool.name, tool.version);
+        } catch (error) {
+            console.error(error);
+        }
+    });
+    resumeBtnEl.addEventListener('click', async function() {
         try {
             await installTool(tool.name, tool.version);
         } catch (error) {
@@ -89,9 +163,13 @@ function createToolCard(tool) {
     if (tool.installed) {
         // Hide install button, show uninstall button
         installBtnEl.style.display = 'none';
+        pauseBtnEl.style.display = 'none';
+        resumeBtnEl.style.display = 'none';
     } else {
         // Show install button, hide uninstall button
         uninstallBtnEl.style.display = 'none';
+        pauseBtnEl.style.display = 'none';
+        resumeBtnEl.style.display = 'none';
     }
     
     return clone;
@@ -102,6 +180,8 @@ async function installTool(toolName, version) {
     const cardId = 'tool-' + toolName + '-' + version;
     const card = document.getElementById(cardId);
     const installBtn = card.querySelector('.install-btn');
+    const pauseBtn = card.querySelector('.pause-btn');
+    const resumeBtn = card.querySelector('.resume-btn');
     const progressContainer = card.querySelector('.progress-container');
     const errorMessage = card.querySelector('.error-message');
     const statusDiv = card.querySelector('.tool-status');
@@ -114,6 +194,8 @@ async function installTool(toolName, version) {
     statusDiv.textContent = t('installing');
 
     try {
+        // 点击安装后确保建立 SSE
+        ensureSSE();
         const response = await fetch('/api/install', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -124,16 +206,12 @@ async function installTool(toolName, version) {
             const error = await response.text();
             throw new Error(error);
         }
-        
-        // Install successful - update UI
-        statusDiv.className = 'tool-status status-installed';
-        statusDiv.textContent = t('installed');
 
-        // Hide install button, show uninstall button
+        // 安装任务已开始：隐藏“安装”，展示“暂停”；等待 SSE 的 completed 再切为卸载
         installBtn.style.display = 'none';
-        const uninstallBtn = card.querySelector('.uninstall-btn');
-        uninstallBtn.style.display = 'block';
-        uninstallBtn.disabled = false;
+        pauseBtn.style.display = 'inline-block';
+        pauseBtn.disabled = false;
+        resumeBtn.style.display = 'none';
     } catch (error) {
         errorMessage.textContent = t('error') + ': ' + error.message;
         errorMessage.style.display = 'block';
@@ -149,6 +227,8 @@ async function uninstallTool(toolName, version) {
     const cardId = 'tool-' + toolName + '-' + version;
     const card = document.getElementById(cardId);
     const uninstallBtn = card.querySelector('.uninstall-btn');
+    const pauseBtn = card.querySelector('.pause-btn');
+    const resumeBtn = card.querySelector('.resume-btn');
     const errorMessage = card.querySelector('.error-message');
     const statusDiv = card.querySelector('.tool-status');
 
@@ -159,6 +239,8 @@ async function uninstallTool(toolName, version) {
     statusDiv.textContent = t('uninstalling');
 
     try {
+        // 点击卸载后确保建立 SSE，以便接收 "uninstalled" 消息
+        ensureSSE();
         const response = await fetch('/api/uninstall', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -179,6 +261,8 @@ async function uninstallTool(toolName, version) {
         const installBtn = card.querySelector('.install-btn');
         installBtn.style.display = 'block';
         installBtn.disabled = false;
+        pauseBtn.style.display = 'none';
+        resumeBtn.style.display = 'none';
     } catch (error) {
         errorMessage.textContent = t('error') + ': ' + error.message;
         errorMessage.style.display = 'block';
@@ -198,6 +282,8 @@ function updateProgress(progress) {
     const progressFill = card.querySelector('.progress-fill');
     const progressText = card.querySelector('.progress-text');
     const installBtn = card.querySelector('.install-btn');
+    const pauseBtn = card.querySelector('.pause-btn');
+    const resumeBtn = card.querySelector('.resume-btn');
     const uninstallBtn = card.querySelector('.uninstall-btn');
     const statusDiv = card.querySelector('.tool-status');
     const errorMessage = card.querySelector('.error-message');
@@ -211,6 +297,9 @@ function updateProgress(progress) {
             progressFill.style.width = percent + '%';
             const speedMB = (progress.speed / 1024 / 1024).toFixed(2);
             progressText.textContent = t('downloading') + ': ' + percent + '% (' + speedMB + ' MB/s)';
+            installBtn.style.display = 'none';
+            resumeBtn.style.display = 'none';
+            pauseBtn.style.display = 'inline-block';
             break;
 
         case 'extracting':
@@ -226,6 +315,8 @@ function updateProgress(progress) {
             uninstallBtn.disabled = false;
             statusDiv.className = 'tool-status status-installed';
             statusDiv.textContent = t('installed');
+            pauseBtn.style.display = 'none';
+            resumeBtn.style.display = 'none';
             break;
 
         case 'failed':
@@ -235,19 +326,103 @@ function updateProgress(progress) {
             statusDiv.textContent = t('failed');
             errorMessage.textContent = t('error') + ': ' + (progress.error || 'Unknown error');
             errorMessage.style.display = 'block';
+            pauseBtn.style.display = 'none';
+            resumeBtn.style.display = 'none';
             break;
+        case 'paused':
+            progressContainer.style.display = 'block';
+            // 维持进度条显示（若后端携带总量与已下载，使用其计算百分比）
+            if (typeof progress.downloadedBytes === 'number' && typeof progress.totalBytes === 'number' && progress.totalBytes > 0) {
+                const ptotal = (progress.downloadedBytes / progress.totalBytes * 100).toFixed(1);
+                progressFill.style.width = ptotal + '%';
+                progressText.textContent = t('downloading') + ': ' + ptotal + '%';
+            }
+            installBtn.style.display = 'none';
+            pauseBtn.style.display = 'none';
+            resumeBtn.style.display = 'inline-block';
+            statusDiv.className = 'tool-status status-installing';
+            statusDiv.textContent = t('downloading');
+            break;
+        case 'uninstalled':
+            // 卸载完成（来自后端主动通知）
+            progressContainer.style.display = 'none';
+            uninstallBtn.style.display = 'none';
+            installBtn.style.display = 'block';
+            installBtn.disabled = false;
+            statusDiv.className = 'tool-status status-not-installed';
+            statusDiv.textContent = t('notInstalled');
+            pauseBtn.style.display = 'none';
+            resumeBtn.style.display = 'none';
+            break;
+    }
+}
+
+// Pause current download
+async function pauseDownload(toolName, version) {
+    const cardId = 'tool-' + toolName + '-' + version;
+    const card = document.getElementById(cardId);
+    const pauseBtn = card.querySelector('.pause-btn');
+    const resumeBtn = card.querySelector('.resume-btn');
+    pauseBtn.disabled = true;
+    try {
+        const response = await fetch('/api/pause', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ toolName, version })
+        });
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(error);
+        }
+        // 暂停成功后切换按钮
+        pauseBtn.style.display = 'none';
+        resumeBtn.style.display = 'inline-block';
+    } catch (e) {
+        console.error(e);
+        pauseBtn.disabled = false;
     }
 }
 
 // Initialize on page load
 window.onload = function() {
-    initSSE();
     loadTools();
+    // 访问首页时先询问后端是否需要建立 SSE
+    (async function() {
+        try {
+            const resp = await fetch('/api/active');
+            const data = await resp.json();
+            if (data.needsSSE) {
+                ensureSSE();
+            } else {
+                startPollingActive();
+            }
+            // 拉取运行时状态，恢复下载/暂停进度
+            const statusResp = await fetch('/api/status');
+            const statuses = await statusResp.json();
+            if (Array.isArray(statuses)) {
+                statuses.forEach(function(s) {
+                    const progress = {
+                        toolName: s.name,
+                        version: s.version,
+                        status: s.paused ? 'paused' : (s.downloading ? 'downloading' : (s.installed ? 'completed' : '')),
+                        downloadedBytes: s.downloadedBytes,
+                        totalBytes: s.totalBytes,
+                        speed: 0
+                    };
+                    if (progress.status) {
+                        updateProgress(progress);
+                    }
+                });
+            }
+        } catch (e) {
+            // 请求失败则开启轮询以便后续重试
+            startPollingActive();
+        }
+    })();
 };
 
 // Cleanup on page unload
 window.onbeforeunload = function() {
-    if (eventSource) {
-        eventSource.close();
-    }
+    closeSSE();
+    stopPollingActive();
 };

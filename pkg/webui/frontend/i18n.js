@@ -10,6 +10,8 @@ const i18n = {
         uninstalling: 'Uninstalling...',
         install: 'Install',
         uninstall: 'Uninstall',
+        pause: 'Pause',
+        resume: 'Resume',
         reinstall: 'Reinstall',
         downloading: 'Downloading',
         extracting: 'Extracting files...',
@@ -30,6 +32,8 @@ const i18n = {
         uninstalling: '卸载中...',
         install: '安装',
         uninstall: '卸载',
+        pause: '暂停',
+        resume: '继续',
         reinstall: '重新安装',
         downloading: '下载中',
         extracting: '解压中...',
@@ -49,13 +53,13 @@ function getPreferredLanguage() {
     if (saved && (saved === 'en' || saved === 'zh')) {
         return saved;
     }
-    
+
     // Check browser language
     const browserLang = navigator.language || navigator.userLanguage;
     if (browserLang.startsWith('zh')) {
         return 'zh';
     }
-    
+
     return 'en';
 }
 
@@ -63,7 +67,7 @@ function getPreferredLanguage() {
 function setLanguage(lang) {
     currentLanguage = lang;
     localStorage.setItem('language', lang);
-    
+
     // Update all elements with data-i18n attribute
     document.querySelectorAll('[data-i18n]').forEach(element => {
         const key = element.getAttribute('data-i18n');
@@ -71,12 +75,12 @@ function setLanguage(lang) {
             element.textContent = i18n[lang][key];
         }
     });
-    
+
     // Update language buttons
     document.querySelectorAll('.lang-btn').forEach(btn => {
         btn.classList.toggle('active', btn.getAttribute('data-lang') === lang);
     });
-    
+
     // Update HTML lang attribute
     document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
 }
@@ -90,11 +94,11 @@ function t(key) {
 let currentLanguage = getPreferredLanguage();
 
 // Set up language switcher when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     setLanguage(currentLanguage);
-    
+
     document.querySelectorAll('.lang-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
+        btn.addEventListener('click', function () {
             setLanguage(this.getAttribute('data-lang'));
             // Re-render tools with new language
             if (window.toolsData && window.toolsData.length > 0) {

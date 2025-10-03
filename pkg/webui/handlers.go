@@ -41,6 +41,10 @@ type APIAdapter interface {
 	ListTools() ([]ToolInfo, error)
 	InstallTool(toolName, version string, progressCallback func(ProgressMessage)) error
 	UninstallTool(toolName, version string) error
+	// GetDownloadInfo returns partial download information (bytes and total) for a tool version
+	GetDownloadInfo(toolName, version string) (int64, int64, error)
+	// PauseTool requests pausing current download if in progress
+	PauseTool(toolName, version string) error
 }
 
 var (
@@ -76,6 +80,9 @@ func (s *WebUIServer) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/install", handleInstall)
 	mux.HandleFunc("/api/uninstall", handleUninstall)
 	mux.HandleFunc("/api/progress", handleSSE)
+	mux.HandleFunc("/api/active", handleActiveTasks)
+	mux.HandleFunc("/api/pause", handlePause)
+	mux.HandleFunc("/api/status", handleStatus)
 }
 
 // handleIndex serves the main HTML page
@@ -93,7 +100,10 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		// best-effort write; log or ignore
+		return
+	}
 }
 
 // handleListTools returns a list of all tools from config
@@ -110,7 +120,9 @@ func handleListTools(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toolsList)
+	if err := json.NewEncoder(w).Encode(toolsList); err != nil {
+		return
+	}
 }
 
 // handleInstall handles tool installation requests
@@ -170,7 +182,9 @@ func handleInstall(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte("Installation started"))
+	if _, err := w.Write([]byte("Installation started")); err != nil {
+		return
+	}
 }
 
 // handleUninstall handles tool uninstallation requests
@@ -203,8 +217,17 @@ func handleUninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 通知前端卸载完成，让其关闭对应的 SSE
+	broadcastProgress(ProgressMessage{
+		ToolName: req.ToolName,
+		Version:  req.Version,
+		Status:   "uninstalled",
+	})
+
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Uninstallation completed"))
+	if _, err := w.Write([]byte("Uninstallation completed")); err != nil {
+		return
+	}
 }
 
 // handleSSE handles Server-Sent Events for progress updates
@@ -262,5 +285,131 @@ func broadcastProgress(msg ProgressMessage) {
 		default:
 			// Client channel is full, skip
 		}
+	}
+}
+
+// ActiveTasksResponse represents whether SSE is needed and the active tasks
+type ActiveTasksResponse struct {
+	NeedsSSE bool             `json:"needsSSE"`
+	Active   []InstallRequest `json:"active"`
+}
+
+// handleActiveTasks returns whether there are active install tasks
+func handleActiveTasks(w http.ResponseWriter, r *http.Request) {
+	activeInstallsMu.RLock()
+	defer activeInstallsMu.RUnlock()
+
+	resp := ActiveTasksResponse{
+		NeedsSSE: len(activeInstalls) > 0,
+		Active:   make([]InstallRequest, 0, len(activeInstalls)),
+	}
+
+	for key := range activeInstalls {
+		// key format: tool@version
+		var tool, ver string
+		if n := len(key); n > 0 {
+			// split only on last '@' to be safe
+			for i := n - 1; i >= 0; i-- {
+				if key[i] == '@' {
+					tool = key[:i]
+					ver = key[i+1:]
+					break
+				}
+			}
+		}
+		if tool != "" && ver != "" {
+			resp.Active = append(resp.Active, InstallRequest{ToolName: tool, Version: ver})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handlePause handles pause requests for ongoing downloads
+func handlePause(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if apiAdapter == nil {
+		http.Error(w, "API not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	var req InstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ToolName == "" || req.Version == "" {
+		http.Error(w, "toolName and version are required", http.StatusBadRequest)
+		return
+	}
+
+	if err := apiAdapter.PauseTool(req.ToolName, req.Version); err != nil {
+		http.Error(w, "Pause failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, err := w.Write([]byte("Paused")); err != nil {
+		return
+	}
+}
+
+// ToolRuntimeStatus provides runtime status for a tool on UI
+type ToolRuntimeStatus struct {
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	Installed       bool   `json:"installed"`
+	Downloading     bool   `json:"downloading"`
+	Paused          bool   `json:"paused"`
+	DownloadedBytes int64  `json:"downloadedBytes"`
+	TotalBytes      int64  `json:"totalBytes"`
+}
+
+// handleStatus returns runtime status for all tools (installed/downloading/paused and progress)
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+	if apiAdapter == nil {
+		http.Error(w, "API not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	toolsList, err := apiAdapter.ListTools()
+	if err != nil {
+		http.Error(w, "Failed to list tools: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Snapshot active installs
+	active := make(map[string]bool)
+	activeInstallsMu.RLock()
+	for k := range activeInstalls {
+		active[k] = true
+	}
+	activeInstallsMu.RUnlock()
+
+	statuses := make([]ToolRuntimeStatus, 0, len(toolsList))
+	for _, t := range toolsList {
+		key := t.Name + "@" + t.Version
+		downloading := active[key]
+		downloadedBytes, totalBytes, derr := apiAdapter.GetDownloadInfo(t.Name, t.Version)
+		if derr != nil {
+			downloadedBytes, totalBytes = 0, 0
+		}
+		paused := !t.Installed && !downloading && downloadedBytes > 0
+		statuses = append(statuses, ToolRuntimeStatus{
+			Name:            t.Name,
+			Version:         t.Version,
+			Installed:       t.Installed,
+			Downloading:     downloading,
+			Paused:          paused,
+			DownloadedBytes: downloadedBytes,
+			TotalBytes:      totalBytes,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(statuses); err != nil {
+		return
 	}
 }

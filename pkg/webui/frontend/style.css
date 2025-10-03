@@ -28,7 +28,7 @@ body {
 h1 {
     color: white;
     font-size: 2.5em;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .lang-switcher {
@@ -69,13 +69,13 @@ h1 {
     background: white;
     border-radius: 12px;
     padding: 20px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     transition: transform 0.2s, box-shadow 0.2s;
 }
 
 .tool-card:hover {
     transform: translateY(-5px);
-    box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+    box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
 }
 
 .tool-name {
@@ -162,6 +162,40 @@ h1 {
 }
 
 .uninstall-btn:disabled {
+    background: #ccc;
+    color: #666;
+    cursor: not-allowed;
+}
+
+/* Pause/Resume buttons share the install button style for consistency */
+.pause-btn,
+.resume-btn {
+    width: 100%;
+    padding: 12px;
+    margin-top: 10px;
+    border: none;
+    border-radius: 6px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    display: none;
+    /* 默认隐藏，由 JS 控制显示 */
+}
+
+.pause-btn:enabled,
+.resume-btn:enabled {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.pause-btn:enabled:hover,
+.resume-btn:enabled:hover {
+    opacity: 0.9;
+}
+
+.pause-btn:disabled,
+.resume-btn:disabled {
     background: #ccc;
     color: #666;
     cursor: not-allowed;
