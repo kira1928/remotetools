@@ -2,12 +2,13 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/kira1928/remotetools/pkg/tools"
 )
 
 func main() {
 	// 加载多版本配置文件
-	err := tools.Get().LoadConfig("config/multi_version_sample.json")
+	err := tools.Get().LoadConfig("config/sample.json")
 	if err != nil {
 		fmt.Println("加载配置失败:", err)
 		return

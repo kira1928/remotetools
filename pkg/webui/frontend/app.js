@@ -1,0 +1,253 @@
+let eventSource = null;
+window.toolsData = [];
+
+// Initialize SSE connection
+function initSSE() {
+    eventSource = new EventSource('/api/progress');
+    
+    eventSource.onmessage = function(event) {
+        const progress = JSON.parse(event.data);
+        updateProgress(progress);
+    };
+
+    eventSource.onerror = function() {
+        console.error('SSE connection error');
+    };
+}
+
+// Load tools list
+async function loadTools() {
+    try {
+        const response = await fetch('/api/tools');
+        const tools = await response.json();
+        
+        window.toolsData = tools;
+        renderTools(tools);
+    } catch (error) {
+        document.getElementById('tools-container').innerHTML = 
+            '<div class="error-message" style="display:block;">' + t('failedToLoad') + ': ' + error.message + '</div>';
+    }
+}
+
+// Render tools grid
+function renderTools(tools) {
+    const container = document.getElementById('tools-container');
+    container.className = 'tools-grid';
+    container.innerHTML = '';
+
+    tools.forEach(tool => {
+        const card = createToolCard(tool);
+        container.appendChild(card);
+    });
+}
+
+// Create tool card element using template
+function createToolCard(tool) {
+    const template = document.getElementById('tool-card-template');
+    const clone = template.content.cloneNode(true);
+    
+    const card = clone.querySelector('.tool-card');
+    card.id = 'tool-' + tool.name + '-' + tool.version;
+    
+    // Set tool name
+    const toolNameEl = clone.querySelector('.tool-name');
+    toolNameEl.textContent = tool.name;
+    
+    // Set tool version
+    const toolVersionEl = clone.querySelector('.tool-version');
+    toolVersionEl.textContent = t('version') + ': ' + tool.version;
+    
+    // Set status
+    const statusEl = clone.querySelector('.tool-status');
+    const statusClass = tool.installed ? 'status-installed' : 'status-not-installed';
+    const statusText = tool.installed ? t('installed') : t('notInstalled');
+    statusEl.className = 'tool-status ' + statusClass;
+    statusEl.textContent = statusText;
+    
+    // Set install button - only show for non-installed tools
+    const installBtnEl = clone.querySelector('.install-btn');
+    const uninstallBtnEl = clone.querySelector('.uninstall-btn');
+    
+    installBtnEl.textContent = t('install');
+    uninstallBtnEl.textContent = t('uninstall');
+    
+    installBtnEl.addEventListener('click', async function() {
+        try {
+            await installTool(tool.name, tool.version);
+        } catch (error) {
+            console.error(error);
+        }
+    });
+    uninstallBtnEl.addEventListener('click', async function() {
+        try {
+            await uninstallTool(tool.name, tool.version);
+        } catch (error) {
+            console.error(error);
+        }
+    });
+    
+    if (tool.installed) {
+        // Hide install button, show uninstall button
+        installBtnEl.style.display = 'none';
+    } else {
+        // Show install button, hide uninstall button
+        uninstallBtnEl.style.display = 'none';
+    }
+    
+    return clone;
+}
+
+// Install tool
+async function installTool(toolName, version) {
+    const cardId = 'tool-' + toolName + '-' + version;
+    const card = document.getElementById(cardId);
+    const installBtn = card.querySelector('.install-btn');
+    const progressContainer = card.querySelector('.progress-container');
+    const errorMessage = card.querySelector('.error-message');
+    const statusDiv = card.querySelector('.tool-status');
+
+    // Reset UI
+    installBtn.disabled = true;
+    progressContainer.style.display = 'block';
+    errorMessage.style.display = 'none';
+    statusDiv.className = 'tool-status status-installing';
+    statusDiv.textContent = t('installing');
+
+    try {
+        const response = await fetch('/api/install', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ toolName, version })
+        });
+
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(error);
+        }
+        
+        // Install successful - update UI
+        statusDiv.className = 'tool-status status-installed';
+        statusDiv.textContent = t('installed');
+
+        // Hide install button, show uninstall button
+        installBtn.style.display = 'none';
+        const uninstallBtn = card.querySelector('.uninstall-btn');
+        uninstallBtn.style.display = 'block';
+        uninstallBtn.disabled = false;
+    } catch (error) {
+        errorMessage.textContent = t('error') + ': ' + error.message;
+        errorMessage.style.display = 'block';
+        installBtn.disabled = false;
+        progressContainer.style.display = 'none';
+        statusDiv.className = 'tool-status status-not-installed';
+        statusDiv.textContent = t('failed');
+    }
+}
+
+// Uninstall tool
+async function uninstallTool(toolName, version) {
+    const cardId = 'tool-' + toolName + '-' + version;
+    const card = document.getElementById(cardId);
+    const uninstallBtn = card.querySelector('.uninstall-btn');
+    const errorMessage = card.querySelector('.error-message');
+    const statusDiv = card.querySelector('.tool-status');
+
+    // Reset UI
+    uninstallBtn.disabled = true;
+    errorMessage.style.display = 'none';
+    statusDiv.className = 'tool-status status-installing';
+    statusDiv.textContent = t('uninstalling');
+
+    try {
+        const response = await fetch('/api/uninstall', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ toolName, version })
+        });
+
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(error);
+        }
+
+        // Uninstall successful - update UI
+        statusDiv.className = 'tool-status status-not-installed';
+        statusDiv.textContent = t('notInstalled');
+        
+        // Hide uninstall button, show install button
+        uninstallBtn.style.display = 'none';
+        const installBtn = card.querySelector('.install-btn');
+        installBtn.style.display = 'block';
+        installBtn.disabled = false;
+    } catch (error) {
+        errorMessage.textContent = t('error') + ': ' + error.message;
+        errorMessage.style.display = 'block';
+        uninstallBtn.disabled = false;
+        statusDiv.className = 'tool-status status-installed';
+        statusDiv.textContent = t('uninstallFailed');
+    }
+}
+
+// Update progress from SSE
+function updateProgress(progress) {
+    const cardId = 'tool-' + progress.toolName + '-' + progress.version;
+    const card = document.getElementById(cardId);
+    if (!card) return;
+
+    const progressContainer = card.querySelector('.progress-container');
+    const progressFill = card.querySelector('.progress-fill');
+    const progressText = card.querySelector('.progress-text');
+    const installBtn = card.querySelector('.install-btn');
+    const uninstallBtn = card.querySelector('.uninstall-btn');
+    const statusDiv = card.querySelector('.tool-status');
+    const errorMessage = card.querySelector('.error-message');
+
+    switch (progress.status) {
+        case 'downloading':
+            progressContainer.style.display = 'block';
+            const percent = progress.totalBytes > 0 
+                ? (progress.downloadedBytes / progress.totalBytes * 100).toFixed(1)
+                : 0;
+            progressFill.style.width = percent + '%';
+            const speedMB = (progress.speed / 1024 / 1024).toFixed(2);
+            progressText.textContent = t('downloading') + ': ' + percent + '% (' + speedMB + ' MB/s)';
+            break;
+
+        case 'extracting':
+            progressFill.style.width = '100%';
+            progressText.textContent = t('extracting');
+            break;
+
+        case 'completed':
+            progressContainer.style.display = 'none';
+            // Hide install button, show uninstall button
+            installBtn.style.display = 'none';
+            uninstallBtn.style.display = 'block';
+            uninstallBtn.disabled = false;
+            statusDiv.className = 'tool-status status-installed';
+            statusDiv.textContent = t('installed');
+            break;
+
+        case 'failed':
+            progressContainer.style.display = 'none';
+            installBtn.disabled = false;
+            statusDiv.className = 'tool-status status-not-installed';
+            statusDiv.textContent = t('failed');
+            errorMessage.textContent = t('error') + ': ' + (progress.error || 'Unknown error');
+            errorMessage.style.display = 'block';
+            break;
+    }
+}
+
+// Initialize on page load
+window.onload = function() {
+    initSSE();
+    loadTools();
+};
+
+// Cleanup on page unload
+window.onbeforeunload = function() {
+    if (eventSource) {
+        eventSource.close();
+    }
+};
