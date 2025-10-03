@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/google/uuid"
 	"github.com/kira1928/remotetools/pkg/config"
 )
 
@@ -34,6 +35,36 @@ func (p *BaseTool) DoesToolExist() bool {
 }
 
 func (p *BaseTool) Install() error {
+	return nil
+}
+
+// Uninstall removes the tool by moving it to a trash folder and then deleting it
+func (p *BaseTool) Uninstall() error {
+	toolFolder := p.GetToolFolder()
+	
+	// Check if the tool folder exists
+	if _, err := os.Stat(toolFolder); os.IsNotExist(err) {
+		return nil // Already uninstalled
+	}
+	
+	// Get the parent directory of the tool folder
+	parentDir := filepath.Dir(toolFolder)
+	
+	// Generate a unique trash folder name
+	trashFolderName := fmt.Sprintf(".trash-%s-%s", filepath.Base(toolFolder), uuid.New().String())
+	trashFolder := filepath.Join(parentDir, trashFolderName)
+	
+	// Move the tool folder to the trash folder
+	if err := os.Rename(toolFolder, trashFolder); err != nil {
+		return fmt.Errorf("failed to move tool folder to trash: %w", err)
+	}
+	
+	// Try to delete the trash folder
+	if err := os.RemoveAll(trashFolder); err != nil {
+		// If deletion fails, it's okay - the cleanup function will handle it later
+		// Just return success since the tool is no longer accessible
+	}
+	
 	return nil
 }
 

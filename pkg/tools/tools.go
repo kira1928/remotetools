@@ -9,11 +9,13 @@ import (
 	"strings"
 
 	"github.com/kira1928/remotetools/pkg/config"
+	"github.com/kira1928/remotetools/pkg/webui"
 )
 
 type Tool interface {
 	DoesToolExist() bool
 	Install() error
+	Uninstall() error
 	Execute(args ...string) error
 	CreateExecuteCmd(args ...string) (cmd *exec.Cmd, err error)
 	GetVersion() string
@@ -37,6 +39,7 @@ var (
 type API struct {
 	config        config.Config
 	toolInstances map[string]Tool
+	webUIServer   *webui.WebUIServer
 }
 
 func (p *API) LoadConfig(path string) (err error) {
@@ -180,12 +183,70 @@ func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error
 	return
 }
 
+// CleanupTrash removes any leftover .trash-* folders in the tool directory
+func CleanupTrash() {
+	toolDir := GetToolFolder()
+	
+	// Check if the tool directory exists
+	if _, err := os.Stat(toolDir); os.IsNotExist(err) {
+		return
+	}
+	
+	// Walk through the tool directory
+	filepath.Walk(toolDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors and continue
+		}
+		
+		// Check if it's a directory and starts with .trash-
+		if info.IsDir() && strings.HasPrefix(info.Name(), ".trash-") {
+			// Try to remove it, but don't fail if we can't
+			os.RemoveAll(path)
+		}
+		
+		return nil
+	})
+}
+
 func init() {
 	instance = &API{
 		toolInstances: make(map[string]Tool),
+		webUIServer:   webui.NewWebUIServer(),
 	}
+	// Set the webui adapter to avoid import cycles
+	webui.SetAPIAdapter(&webuiAdapter{api: instance})
+	
+	// Cleanup any leftover trash folders on startup
+	CleanupTrash()
 }
 
 func Get() *API {
 	return instance
+}
+
+// GetConfig returns the current configuration
+func (p *API) GetConfig() config.Config {
+	return p.config
+}
+
+// StartWebUI starts the web UI server
+// If port is 0, a random available port will be chosen
+func (p *API) StartWebUI(port int) error {
+	return p.webUIServer.Start(port)
+}
+
+// StopWebUI stops the web UI server
+func (p *API) StopWebUI() error {
+	return p.webUIServer.Stop()
+}
+
+// GetWebUIStatus returns the current status of the web UI server
+func (p *API) GetWebUIStatus() webui.ServerStatus {
+	return p.webUIServer.GetStatus()
+}
+
+// GetWebUIPort returns the port the web UI server is running on
+// Returns 0 if the server is not running
+func (p *API) GetWebUIPort() int {
+	return p.webUIServer.GetPort()
 }
