@@ -41,29 +41,42 @@ function renderTools(tools) {
     });
 }
 
-// Create tool card element
+// Create tool card element using template
 function createToolCard(tool) {
-    const card = document.createElement('div');
-    card.className = 'tool-card';
+    const template = document.getElementById('tool-card-template');
+    const clone = template.content.cloneNode(true);
+    
+    const card = clone.querySelector('.tool-card');
     card.id = 'tool-' + tool.name + '-' + tool.version;
-
+    
+    // Set tool name
+    const toolNameEl = clone.querySelector('.tool-name');
+    toolNameEl.textContent = tool.name;
+    
+    // Set tool version
+    const toolVersionEl = clone.querySelector('.tool-version');
+    toolVersionEl.textContent = t('version') + ': ' + tool.version;
+    
+    // Set status
+    const statusEl = clone.querySelector('.tool-status');
     const statusClass = tool.installed ? 'status-installed' : 'status-not-installed';
     const statusText = tool.installed ? t('installed') : t('notInstalled');
-    const btnText = tool.installed ? t('reinstall') : t('install');
-
-    card.innerHTML = '<div class="tool-name">' + tool.name + '</div>' +
-        '<div class="tool-version">' + t('version') + ': ' + tool.version + '</div>' +
-        '<div class="tool-status ' + statusClass + '">' + statusText + '</div>' +
-        '<button class="install-btn" onclick="installTool(\'' + tool.name + '\', \'' + tool.version + '\')">' + btnText + '</button>' +
-        '<div class="progress-container">' +
-        '    <div class="progress-bar">' +
-        '        <div class="progress-fill"></div>' +
-        '    </div>' +
-        '    <div class="progress-text"></div>' +
-        '</div>' +
-        '<div class="error-message"></div>';
-
-    return card;
+    statusEl.className = 'tool-status ' + statusClass;
+    statusEl.textContent = statusText;
+    
+    // Set button - only show for non-installed tools
+    const btnEl = clone.querySelector('.install-btn');
+    if (tool.installed) {
+        // Hide button for installed tools
+        btnEl.style.display = 'none';
+    } else {
+        btnEl.textContent = t('install');
+        btnEl.addEventListener('click', function() {
+            installTool(tool.name, tool.version);
+        });
+    }
+    
+    return clone;
 }
 
 // Install tool
@@ -134,8 +147,8 @@ function updateProgress(progress) {
 
         case 'completed':
             progressContainer.style.display = 'none';
-            btn.disabled = false;
-            btn.textContent = t('reinstall');
+            // Hide button after successful installation
+            btn.style.display = 'none';
             statusDiv.className = 'tool-status status-installed';
             statusDiv.textContent = t('installed');
             break;
