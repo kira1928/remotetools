@@ -1,5 +1,7 @@
 # Web UI Management Feature
 
+[English](README.md) | [中文](README_zh.md)
+
 This directory contains an example demonstrating the web UI management feature for Remote Tools.
 
 ## Overview
@@ -12,6 +14,7 @@ The web UI provides a browser-based interface for managing tool installations. I
 - **Multi-version Support**: View and manage different versions of the same tool
 - **Multi-language Support**: Switch between English and Chinese, with preference saved in localStorage
 - **Simple Technology**: Pure HTML5/CSS/JS without complex frameworks (total size ~24KB)
+- **Template-based DOM**: Uses HTML `<template>` element for safe and efficient DOM manipulation
 
 ## Running the Example
 
@@ -70,7 +73,7 @@ func main() {
 ### Web Interface
 - Lists all configured tools with versions
 - Shows installation status with color-coded badges
-- Install/Reinstall buttons
+- Install buttons only for non-installed tools
 - Live progress bars during installation
 - Responsive grid layout
 - **Language switcher (English/Chinese) with localStorage persistence**
