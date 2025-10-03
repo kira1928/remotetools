@@ -13,18 +13,74 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kira1928/remotetools/pkg/config"
 )
 
+// DownloadProgress represents the download progress information
+type DownloadProgress struct {
+	TotalBytes      int64
+	DownloadedBytes int64
+	Speed           float64 // bytes per second
+	Status          string  // downloading, extracting, completed, failed
+	Error           error
+}
+
+// ProgressCallback is called during download to report progress
+type ProgressCallback func(progress DownloadProgress)
+
 type DownloadedTool struct {
 	*BaseTool
+	progressCallback ProgressCallback
+}
+
+// progressReader wraps an io.Reader to track download progress
+type progressReader struct {
+	reader           io.Reader
+	totalBytes       int64
+	downloadedBytes  int64
+	lastUpdate       time.Time
+	lastBytes        int64
+	callback         ProgressCallback
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	pr.downloadedBytes += int64(n)
+
+	now := time.Now()
+	if now.Sub(pr.lastUpdate) >= 500*time.Millisecond {
+		// Calculate speed
+		duration := now.Sub(pr.lastUpdate).Seconds()
+		bytesSinceLastUpdate := pr.downloadedBytes - pr.lastBytes
+		speed := float64(bytesSinceLastUpdate) / duration
+
+		if pr.callback != nil {
+			pr.callback(DownloadProgress{
+				TotalBytes:      pr.totalBytes,
+				DownloadedBytes: pr.downloadedBytes,
+				Speed:           speed,
+				Status:          "downloading",
+			})
+		}
+
+		pr.lastUpdate = now
+		pr.lastBytes = pr.downloadedBytes
+	}
+
+	return n, err
 }
 
 func NewDownloadTool(conf *config.ToolConfig) *DownloadedTool {
 	return &DownloadedTool{
 		BaseTool: NewBaseTool(conf),
 	}
+}
+
+// SetProgressCallback sets a callback function to receive progress updates
+func (p *DownloadedTool) SetProgressCallback(callback ProgressCallback) {
+	p.progressCallback = callback
 }
 
 func (p *DownloadedTool) Install() error {
@@ -38,6 +94,11 @@ func (p *DownloadedTool) getDownloadUrl() string {
 func (p *DownloadedTool) DownloadTool() error {
 	// check if file already exists
 	if p.DoesToolExist() {
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "completed",
+			})
+		}
 		return nil
 	}
 
@@ -46,6 +107,12 @@ func (p *DownloadedTool) DownloadTool() error {
 	// get the file name from the URL
 	downloadFileName, err := getFileNameFromURL(url)
 	if err != nil {
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "failed",
+				Error:  err,
+			})
+		}
 		return err
 	}
 
@@ -55,6 +122,12 @@ func (p *DownloadedTool) DownloadTool() error {
 	if _, err := os.Stat(toolFolder); os.IsNotExist(err) {
 		err = os.MkdirAll(toolFolder, 0755)
 		if err != nil {
+			if p.progressCallback != nil {
+				p.progressCallback(DownloadProgress{
+					Status: "failed",
+					Error:  err,
+				})
+			}
 			return err
 		}
 	}
@@ -76,6 +149,12 @@ func (p *DownloadedTool) DownloadTool() error {
 	// Create HTTP request with Range header for resumable download
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "failed",
+				Error:  err,
+			})
+		}
 		return err
 	}
 
@@ -87,13 +166,26 @@ func (p *DownloadedTool) DownloadTool() error {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "failed",
+				Error:  err,
+			})
+		}
 		return err
 	}
 	defer resp.Body.Close()
 
 	// check if the response status code is 200 (full content) or 206 (partial content)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
+		err := fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "failed",
+				Error:  err,
+			})
+		}
+		return err
 	}
 
 	// Open file for writing (create or append)
@@ -102,28 +194,76 @@ func (p *DownloadedTool) DownloadTool() error {
 		// Append to existing file
 		out, err = os.OpenFile(tmpPath, os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
+			if p.progressCallback != nil {
+				p.progressCallback(DownloadProgress{
+					Status: "failed",
+					Error:  err,
+				})
+			}
 			return err
 		}
 	} else {
 		// Create new file (server doesn't support resume or no existing file)
 		out, err = os.Create(tmpPath)
 		if err != nil {
+			if p.progressCallback != nil {
+				p.progressCallback(DownloadProgress{
+					Status: "failed",
+					Error:  err,
+				})
+			}
 			return err
 		}
 	}
 
+	// Create progress reader if callback is set
+	var reader io.Reader = resp.Body
+	if p.progressCallback != nil {
+		// Calculate total bytes: if resuming, add existing size to content length
+		totalBytes := resp.ContentLength
+		if resp.StatusCode == http.StatusPartialContent && existingSize > 0 {
+			totalBytes += existingSize
+		}
+		pr := &progressReader{
+			reader:           resp.Body,
+			totalBytes:       totalBytes,
+			downloadedBytes:  existingSize, // Start from existing size if resuming
+			lastUpdate:       time.Now(),
+			lastBytes:        existingSize,
+			callback:         p.progressCallback,
+		}
+		reader = pr
+	}
+
 	// write the body to file
-	_, err = io.Copy(out, resp.Body)
+	_, err = io.Copy(out, reader)
 	if err != nil {
 		out.Close()
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "failed",
+				Error:  err,
+			})
+		}
 		return err
 	}
 	out.Close()
 
 	// 如果下载文件以 .zip 或 .tar.gz 结尾，则解压文件
 	if strings.HasSuffix(downloadFileName, ".zip") || strings.HasSuffix(downloadFileName, ".tar.gz") {
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "extracting",
+			})
+		}
 		err = extractDownloadedFile(tmpPath, toolFolder)
 		if err != nil {
+			if p.progressCallback != nil {
+				p.progressCallback(DownloadProgress{
+					Status: "failed",
+					Error:  err,
+				})
+			}
 			return err
 		}
 	}
@@ -131,7 +271,19 @@ func (p *DownloadedTool) DownloadTool() error {
 	// delete the downloaded file
 	err = os.Remove(tmpPath)
 	if err != nil {
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "failed",
+				Error:  err,
+			})
+		}
 		return err
+	}
+
+	if p.progressCallback != nil {
+		p.progressCallback(DownloadProgress{
+			Status: "completed",
+		})
 	}
 
 	return nil
