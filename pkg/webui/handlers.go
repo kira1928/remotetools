@@ -69,7 +69,7 @@ func (s *WebUIServer) setupRoutes(mux *http.ServeMux) {
 		panic(err)
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(frontendSubFS))))
-	
+
 	// API routes
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/tools", handleListTools)
@@ -239,7 +239,9 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return
+			}
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}

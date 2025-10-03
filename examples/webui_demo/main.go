@@ -11,7 +11,7 @@ import (
 
 func main() {
 	// Load configuration
-	err := tools.Get().LoadConfig("config/multi_version_sample.json")
+	err := tools.Get().LoadConfig("config/sample.json")
 	if err != nil {
 		fmt.Println("Failed to load config:", err)
 		return

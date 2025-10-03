@@ -36,7 +36,7 @@ import (
 
 func main() {
     // Load configuration
-    tools.Get().LoadConfig("config/multi_version_sample.json")
+    tools.Get().LoadConfig("config/sample.json")
 
     // Start web UI on port 8080 (use 0 for random port)
     err := tools.Get().StartWebUI(8080)

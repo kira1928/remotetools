@@ -36,7 +36,7 @@ import (
 
 func main() {
     // 加载配置
-    tools.Get().LoadConfig("config/multi_version_sample.json")
+    tools.Get().LoadConfig("config/sample.json")
 
     // 启动 Web UI，端口 8080（使用 0 表示随机端口）
     err := tools.Get().StartWebUI(8080)

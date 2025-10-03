@@ -13,7 +13,7 @@ import (
 // go test -v examples/webui_demo/integration_test.go
 func TestWebUIIntegration(t *testing.T) {
 	// Load configuration
-	err := tools.Get().LoadConfig("../../config/multi_version_sample.json")
+	err := tools.Get().LoadConfig("../../config/sample.json")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}

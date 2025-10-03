@@ -68,19 +68,29 @@ function createToolCard(tool) {
     const installBtnEl = clone.querySelector('.install-btn');
     const uninstallBtnEl = clone.querySelector('.uninstall-btn');
     
+    installBtnEl.textContent = t('install');
+    uninstallBtnEl.textContent = t('uninstall');
+    
+    installBtnEl.addEventListener('click', async function() {
+        try {
+            await installTool(tool.name, tool.version);
+        } catch (error) {
+            console.error(error);
+        }
+    });
+    uninstallBtnEl.addEventListener('click', async function() {
+        try {
+            await uninstallTool(tool.name, tool.version);
+        } catch (error) {
+            console.error(error);
+        }
+    });
+    
     if (tool.installed) {
         // Hide install button, show uninstall button
         installBtnEl.style.display = 'none';
-        uninstallBtnEl.textContent = t('uninstall');
-        uninstallBtnEl.addEventListener('click', function() {
-            uninstallTool(tool.name, tool.version);
-        });
     } else {
         // Show install button, hide uninstall button
-        installBtnEl.textContent = t('install');
-        installBtnEl.addEventListener('click', function() {
-            installTool(tool.name, tool.version);
-        });
         uninstallBtnEl.style.display = 'none';
     }
     
@@ -91,13 +101,13 @@ function createToolCard(tool) {
 async function installTool(toolName, version) {
     const cardId = 'tool-' + toolName + '-' + version;
     const card = document.getElementById(cardId);
-    const btn = card.querySelector('.install-btn');
+    const installBtn = card.querySelector('.install-btn');
     const progressContainer = card.querySelector('.progress-container');
     const errorMessage = card.querySelector('.error-message');
     const statusDiv = card.querySelector('.tool-status');
 
     // Reset UI
-    btn.disabled = true;
+    installBtn.disabled = true;
     progressContainer.style.display = 'block';
     errorMessage.style.display = 'none';
     statusDiv.className = 'tool-status status-installing';
@@ -114,10 +124,20 @@ async function installTool(toolName, version) {
             const error = await response.text();
             throw new Error(error);
         }
+        
+        // Install successful - update UI
+        statusDiv.className = 'tool-status status-installed';
+        statusDiv.textContent = t('installed');
+
+        // Hide install button, show uninstall button
+        installBtn.style.display = 'none';
+        const uninstallBtn = card.querySelector('.uninstall-btn');
+        uninstallBtn.style.display = 'block';
+        uninstallBtn.disabled = false;
     } catch (error) {
         errorMessage.textContent = t('error') + ': ' + error.message;
         errorMessage.style.display = 'block';
-        btn.disabled = false;
+        installBtn.disabled = false;
         progressContainer.style.display = 'none';
         statusDiv.className = 'tool-status status-not-installed';
         statusDiv.textContent = t('failed');
@@ -159,13 +179,6 @@ async function uninstallTool(toolName, version) {
         const installBtn = card.querySelector('.install-btn');
         installBtn.style.display = 'block';
         installBtn.disabled = false;
-        installBtn.textContent = t('install');
-        
-        // Add click event listener to the install button
-        installBtn.onclick = function() {
-            installTool(toolName, version);
-        };
-
     } catch (error) {
         errorMessage.textContent = t('error') + ': ' + error.message;
         errorMessage.style.display = 'block';

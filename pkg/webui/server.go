@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -96,11 +95,7 @@ func (s *WebUIServer) Stop() error {
 
 	s.status = StatusStopping
 
-	// Use a longer timeout to allow SSE connections to close gracefully
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := s.server.Shutdown(ctx); err != nil {
+	if err := s.server.Close(); err != nil {
 		s.status = StatusStopped
 		return fmt.Errorf("failed to shutdown server: %w", err)
 	}

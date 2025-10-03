@@ -3,12 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+
 	"github.com/kira1928/remotetools/pkg/tools"
 )
 
 func main() {
 	// 加载配置
-	err := tools.Get().LoadConfig("config/multi_version_sample.json")
+	err := tools.Get().LoadConfig("config/sample.json")
 	if err != nil {
 		fmt.Println("加载配置失败:", err)
 		return
@@ -26,7 +27,7 @@ func main() {
 		return
 	}
 	fmt.Printf("最新版本: %s\n", dotnetLatest.GetVersion())
-	
+
 	if !dotnetLatest.DoesToolExist() {
 		fmt.Println("工具未安装，开始下载...")
 		err = dotnetLatest.Install()
@@ -49,10 +50,10 @@ func main() {
 		fmt.Println("提示: 需要先安装工具")
 		return
 	}
-	
+
 	fmt.Printf("使用已安装的版本: %s\n", dotnetExec.GetVersion())
 	fmt.Println("执行: dotnet --version")
-	
+
 	cmd, err := dotnetExec.CreateExecuteCmd("--version")
 	if err != nil {
 		fmt.Println("错误:", err)
@@ -74,7 +75,7 @@ func main() {
 		fmt.Println("错误:", err)
 		return
 	}
-	
+
 	fmt.Printf("智能选择的版本: %s\n", dotnet.GetVersion())
 	if dotnet.DoesToolExist() {
 		fmt.Println("该版本已安装，可以直接使用")
