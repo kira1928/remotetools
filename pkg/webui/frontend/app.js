@@ -160,6 +160,11 @@ async function uninstallTool(toolName, version) {
         installBtn.style.display = 'block';
         installBtn.disabled = false;
         installBtn.textContent = t('install');
+        
+        // Add click event listener to the install button
+        installBtn.onclick = function() {
+            installTool(toolName, version);
+        };
 
     } catch (error) {
         errorMessage.textContent = t('error') + ': ' + error.message;

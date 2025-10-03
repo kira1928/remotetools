@@ -96,7 +96,8 @@ func (s *WebUIServer) Stop() error {
 
 	s.status = StatusStopping
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Use a longer timeout to allow SSE connections to close gracefully
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := s.server.Shutdown(ctx); err != nil {
