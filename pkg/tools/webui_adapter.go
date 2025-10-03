@@ -60,3 +60,14 @@ func (a *webuiAdapter) InstallTool(toolName, version string, progressCallback fu
 	// Perform installation
 	return tool.Install()
 }
+
+// UninstallTool uninstalls a tool
+func (a *webuiAdapter) UninstallTool(toolName, version string) error {
+	tool, err := a.api.GetToolWithVersion(toolName, version)
+	if err != nil {
+		return err
+	}
+
+	// Perform uninstallation
+	return tool.Uninstall()
+}

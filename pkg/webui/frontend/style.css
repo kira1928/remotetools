@@ -140,6 +140,33 @@ h1 {
     cursor: not-allowed;
 }
 
+.uninstall-btn {
+    width: 100%;
+    padding: 12px;
+    margin-top: 10px;
+    border: none;
+    border-radius: 6px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.uninstall-btn:enabled {
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+    color: white;
+}
+
+.uninstall-btn:enabled:hover {
+    opacity: 0.9;
+}
+
+.uninstall-btn:disabled {
+    background: #ccc;
+    color: #666;
+    cursor: not-allowed;
+}
+
 .progress-container {
     margin-top: 10px;
     display: none;

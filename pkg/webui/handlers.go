@@ -40,6 +40,7 @@ type ProgressMessage struct {
 type APIAdapter interface {
 	ListTools() ([]ToolInfo, error)
 	InstallTool(toolName, version string, progressCallback func(ProgressMessage)) error
+	UninstallTool(toolName, version string) error
 }
 
 var (
@@ -73,6 +74,7 @@ func (s *WebUIServer) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/tools", handleListTools)
 	mux.HandleFunc("/api/install", handleInstall)
+	mux.HandleFunc("/api/uninstall", handleUninstall)
 	mux.HandleFunc("/api/progress", handleSSE)
 }
 
@@ -169,6 +171,40 @@ func handleInstall(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("Installation started"))
+}
+
+// handleUninstall handles tool uninstallation requests
+func handleUninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if apiAdapter == nil {
+		http.Error(w, "API not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	var req InstallRequest // Reuse the same struct
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ToolName == "" || req.Version == "" {
+		http.Error(w, "toolName and version are required", http.StatusBadRequest)
+		return
+	}
+
+	// Perform uninstallation
+	err := apiAdapter.UninstallTool(req.ToolName, req.Version)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Uninstallation failed: %s", err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Uninstallation completed"))
 }
 
 // handleSSE handles Server-Sent Events for progress updates

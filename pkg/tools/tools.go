@@ -15,6 +15,7 @@ import (
 type Tool interface {
 	DoesToolExist() bool
 	Install() error
+	Uninstall() error
 	Execute(args ...string) error
 	CreateExecuteCmd(args ...string) (cmd *exec.Cmd, err error)
 	GetVersion() string
@@ -182,6 +183,31 @@ func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error
 	return
 }
 
+// CleanupTrash removes any leftover .trash-* folders in the tool directory
+func CleanupTrash() {
+	toolDir := GetToolFolder()
+	
+	// Check if the tool directory exists
+	if _, err := os.Stat(toolDir); os.IsNotExist(err) {
+		return
+	}
+	
+	// Walk through the tool directory
+	filepath.Walk(toolDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors and continue
+		}
+		
+		// Check if it's a directory and starts with .trash-
+		if info.IsDir() && strings.HasPrefix(info.Name(), ".trash-") {
+			// Try to remove it, but don't fail if we can't
+			os.RemoveAll(path)
+		}
+		
+		return nil
+	})
+}
+
 func init() {
 	instance = &API{
 		toolInstances: make(map[string]Tool),
@@ -189,6 +215,9 @@ func init() {
 	}
 	// Set the webui adapter to avoid import cycles
 	webui.SetAPIAdapter(&webuiAdapter{api: instance})
+	
+	// Cleanup any leftover trash folders on startup
+	CleanupTrash()
 }
 
 func Get() *API {

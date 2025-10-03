@@ -64,16 +64,24 @@ function createToolCard(tool) {
     statusEl.className = 'tool-status ' + statusClass;
     statusEl.textContent = statusText;
     
-    // Set button - only show for non-installed tools
-    const btnEl = clone.querySelector('.install-btn');
+    // Set install button - only show for non-installed tools
+    const installBtnEl = clone.querySelector('.install-btn');
+    const uninstallBtnEl = clone.querySelector('.uninstall-btn');
+    
     if (tool.installed) {
-        // Hide button for installed tools
-        btnEl.style.display = 'none';
+        // Hide install button, show uninstall button
+        installBtnEl.style.display = 'none';
+        uninstallBtnEl.textContent = t('uninstall');
+        uninstallBtnEl.addEventListener('click', function() {
+            uninstallTool(tool.name, tool.version);
+        });
     } else {
-        btnEl.textContent = t('install');
-        btnEl.addEventListener('click', function() {
+        // Show install button, hide uninstall button
+        installBtnEl.textContent = t('install');
+        installBtnEl.addEventListener('click', function() {
             installTool(tool.name, tool.version);
         });
+        uninstallBtnEl.style.display = 'none';
     }
     
     return clone;
@@ -116,6 +124,52 @@ async function installTool(toolName, version) {
     }
 }
 
+// Uninstall tool
+async function uninstallTool(toolName, version) {
+    const cardId = 'tool-' + toolName + '-' + version;
+    const card = document.getElementById(cardId);
+    const uninstallBtn = card.querySelector('.uninstall-btn');
+    const errorMessage = card.querySelector('.error-message');
+    const statusDiv = card.querySelector('.tool-status');
+
+    // Reset UI
+    uninstallBtn.disabled = true;
+    errorMessage.style.display = 'none';
+    statusDiv.className = 'tool-status status-installing';
+    statusDiv.textContent = t('uninstalling');
+
+    try {
+        const response = await fetch('/api/uninstall', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ toolName, version })
+        });
+
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(error);
+        }
+
+        // Uninstall successful - update UI
+        statusDiv.className = 'tool-status status-not-installed';
+        statusDiv.textContent = t('notInstalled');
+        
+        // Hide uninstall button, show install button
+        uninstallBtn.style.display = 'none';
+        const installBtn = card.querySelector('.install-btn');
+        installBtn.style.display = 'block';
+        installBtn.disabled = false;
+        installBtn.textContent = t('install');
+
+    } catch (error) {
+        errorMessage.textContent = t('error') + ': ' + error.message;
+        errorMessage.style.display = 'block';
+        uninstallBtn.disabled = false;
+        statusDiv.className = 'tool-status status-installed';
+        statusDiv.textContent = t('uninstallFailed');
+    }
+}
+
 // Update progress from SSE
 function updateProgress(progress) {
     const cardId = 'tool-' + progress.toolName + '-' + progress.version;
@@ -125,7 +179,8 @@ function updateProgress(progress) {
     const progressContainer = card.querySelector('.progress-container');
     const progressFill = card.querySelector('.progress-fill');
     const progressText = card.querySelector('.progress-text');
-    const btn = card.querySelector('.install-btn');
+    const installBtn = card.querySelector('.install-btn');
+    const uninstallBtn = card.querySelector('.uninstall-btn');
     const statusDiv = card.querySelector('.tool-status');
     const errorMessage = card.querySelector('.error-message');
 
@@ -147,15 +202,17 @@ function updateProgress(progress) {
 
         case 'completed':
             progressContainer.style.display = 'none';
-            // Hide button after successful installation
-            btn.style.display = 'none';
+            // Hide install button, show uninstall button
+            installBtn.style.display = 'none';
+            uninstallBtn.style.display = 'block';
+            uninstallBtn.disabled = false;
             statusDiv.className = 'tool-status status-installed';
             statusDiv.textContent = t('installed');
             break;
 
         case 'failed':
             progressContainer.style.display = 'none';
-            btn.disabled = false;
+            installBtn.disabled = false;
             statusDiv.className = 'tool-status status-not-installed';
             statusDiv.textContent = t('failed');
             errorMessage.textContent = t('error') + ': ' + (progress.error || 'Unknown error');
