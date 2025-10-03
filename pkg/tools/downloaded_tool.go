@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,8 +13,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"sync/atomic"
 
 	"github.com/kira1928/remotetools/pkg/config"
 )
@@ -33,19 +37,26 @@ type ProgressCallback func(progress DownloadProgress)
 type DownloadedTool struct {
 	*BaseTool
 	progressCallback ProgressCallback
+	paused           int32 // atomic flag: 1 paused, 0 running
+	lastTotalBytes   int64 // last known total bytes
 }
 
 // progressReader wraps an io.Reader to track download progress
 type progressReader struct {
-	reader           io.Reader
-	totalBytes       int64
-	downloadedBytes  int64
-	lastUpdate       time.Time
-	lastBytes        int64
-	callback         ProgressCallback
+	reader          io.Reader
+	totalBytes      int64
+	downloadedBytes int64
+	lastUpdate      time.Time
+	lastBytes       int64
+	callback        ProgressCallback
+	pausedFlag      *int32
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
+	// honor pause
+	if pr.pausedFlag != nil && atomic.LoadInt32(pr.pausedFlag) == 1 {
+		return 0, errPaused
+	}
 	n, err := pr.reader.Read(p)
 	pr.downloadedBytes += int64(n)
 
@@ -72,6 +83,8 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+var errPaused = errors.New("paused")
+
 func NewDownloadTool(conf *config.ToolConfig) *DownloadedTool {
 	return &DownloadedTool{
 		BaseTool: NewBaseTool(conf),
@@ -92,6 +105,8 @@ func (p *DownloadedTool) getDownloadUrl() string {
 }
 
 func (p *DownloadedTool) DownloadTool() error {
+	// 开始/恢复下载前清除暂停标记
+	atomic.StoreInt32(&p.paused, 0)
 	// check if file already exists
 	if p.DoesToolExist() {
 		if p.progressCallback != nil {
@@ -103,31 +118,6 @@ func (p *DownloadedTool) DownloadTool() error {
 	}
 
 	url := p.getDownloadUrl()
-
-	// download tool using the obtained URL
-	resp, err := http.Get(url)
-	if err != nil {
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "failed",
-				Error:  err,
-			})
-		}
-		return err
-	}
-	defer resp.Body.Close()
-
-	// check if the response status code is 200
-	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "failed",
-				Error:  err,
-			})
-		}
-		return err
-	}
 
 	// get the file name from the URL
 	downloadFileName, err := getFileNameFromURL(url)
@@ -145,7 +135,7 @@ func (p *DownloadedTool) DownloadTool() error {
 
 	// Create the directory if it does not exist
 	if _, err := os.Stat(toolFolder); os.IsNotExist(err) {
-		err = os.MkdirAll(toolFolder, 0755) // You can adjust the file permission as needed
+		err = os.MkdirAll(toolFolder, 0755)
 		if err != nil {
 			if p.progressCallback != nil {
 				p.progressCallback(DownloadProgress{
@@ -157,8 +147,24 @@ func (p *DownloadedTool) DownloadTool() error {
 		}
 	}
 
+	// Clean up any leftover temporary extraction folders
+	tmpExtractFolder := filepath.Join(filepath.Dir(toolFolder), ".tmp_"+filepath.Base(toolFolder))
+	if _, err := os.Stat(tmpExtractFolder); err == nil {
+		if err := os.RemoveAll(tmpExtractFolder); err != nil {
+			return fmt.Errorf("failed to remove temporary extraction folder: %w", err)
+		}
+	}
+
 	tmpPath := filepath.Join(toolFolder, downloadFileName)
-	out, err := os.Create(tmpPath)
+
+	// Check if partial download exists to support resumable download
+	var existingSize int64
+	if stat, err := os.Stat(tmpPath); err == nil {
+		existingSize = stat.Size()
+	}
+
+	// Create HTTP request with Range header for resumable download
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		if p.progressCallback != nil {
 			p.progressCallback(DownloadProgress{
@@ -169,22 +175,14 @@ func (p *DownloadedTool) DownloadTool() error {
 		return err
 	}
 
-	// Create progress reader if callback is set
-	var reader io.Reader = resp.Body
-	if p.progressCallback != nil {
-		pr := &progressReader{
-			reader:     resp.Body,
-			totalBytes: resp.ContentLength,
-			lastUpdate: time.Now(),
-			callback:   p.progressCallback,
-		}
-		reader = pr
+	if existingSize > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
 	}
 
-	// write the body to file
-	_, err = io.Copy(out, reader)
+	// download tool using the obtained URL
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		out.Close()
 		if p.progressCallback != nil {
 			p.progressCallback(DownloadProgress{
 				Status: "failed",
@@ -193,7 +191,148 @@ func (p *DownloadedTool) DownloadTool() error {
 		}
 		return err
 	}
-	out.Close()
+	defer resp.Body.Close()
+
+	// If server returns 416 (Range Not Satisfiable), it might be because our local file size
+	// already matches the server file size. Send a HEAD request to verify Content-Length.
+	skipDownload := false
+	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		headReq, herr := http.NewRequest("HEAD", url, nil)
+		if herr == nil {
+			headResp, herr := client.Do(headReq)
+			if herr == nil {
+				defer func() {
+					if cerr := headResp.Body.Close(); cerr != nil {
+						log.Printf("关闭 headResp.Body 时出错: %v", cerr)
+					}
+				}()
+				if headResp.StatusCode == http.StatusOK {
+					clHeader := headResp.Header.Get("Content-Length")
+					if clHeader != "" {
+						if serverSize, perr := strconv.ParseInt(clHeader, 10, 64); perr == nil {
+							if existingSize > 0 && existingSize == serverSize {
+								// Local file already complete; skip further download and proceed to extraction.
+								skipDownload = true
+								// fallthrough to extraction path below
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// check if the response status code is 200 (full content) or 206 (partial content)
+	if !skipDownload && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		err := fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
+		if p.progressCallback != nil {
+			p.progressCallback(DownloadProgress{
+				Status: "failed",
+				Error:  err,
+			})
+		}
+		return err
+	}
+
+	if !skipDownload {
+		// Open file for writing (create or append)
+		var out *os.File
+		if resp.StatusCode == http.StatusPartialContent && existingSize > 0 {
+			// Append to existing file
+			out, err = os.OpenFile(tmpPath, os.O_WRONLY|os.O_APPEND, 0644)
+			if err != nil {
+				if p.progressCallback != nil {
+					p.progressCallback(DownloadProgress{
+						Status: "failed",
+						Error:  err,
+					})
+				}
+				return err
+			}
+		} else {
+			// Create new file (server doesn't support resume or no existing file)
+			out, err = os.Create(tmpPath)
+			if err != nil {
+				if p.progressCallback != nil {
+					p.progressCallback(DownloadProgress{
+						Status: "failed",
+						Error:  err,
+					})
+				}
+				return err
+			}
+		}
+
+		// Create progress reader if callback is set
+		var reader io.Reader = resp.Body
+		if p.progressCallback != nil {
+			// Calculate total bytes: if resuming, add existing size to content length
+			totalBytes := resp.ContentLength
+			if resp.StatusCode == http.StatusPartialContent && existingSize > 0 {
+				totalBytes += existingSize
+			}
+			// store last known total
+			p.lastTotalBytes = totalBytes
+			pr := &progressReader{
+				reader:          resp.Body,
+				totalBytes:      totalBytes,
+				downloadedBytes: existingSize, // Start from existing size if resuming
+				lastUpdate:      time.Now(),
+				lastBytes:       existingSize,
+				callback:        p.progressCallback,
+				pausedFlag:      &p.paused,
+			}
+			reader = pr
+		}
+
+		// write the body to file
+		_, err = io.Copy(out, reader)
+		if err != nil {
+			if cerr := out.Close(); cerr != nil {
+				if p.progressCallback != nil {
+					p.progressCallback(DownloadProgress{
+						Status: "failed",
+						Error:  cerr,
+					})
+				}
+				return cerr
+			}
+			// distinguish pause vs real error
+			if err == errPaused {
+				if p.progressCallback != nil {
+					// 读取当前临时文件大小，作为已下载字节数
+					var currentSize int64
+					if stat, sErr := os.Stat(tmpPath); sErr == nil {
+						currentSize = stat.Size()
+					}
+					p.progressCallback(DownloadProgress{
+						TotalBytes:      p.lastTotalBytes,
+						DownloadedBytes: currentSize,
+						Speed:           0,
+						Status:          "paused",
+					})
+				}
+				return nil
+			} else {
+				if p.progressCallback != nil {
+					p.progressCallback(DownloadProgress{
+						Status: "failed",
+						Error:  err,
+					})
+				}
+				return err
+			}
+		}
+		if cerr := out.Close(); cerr != nil {
+			if p.progressCallback != nil {
+				p.progressCallback(DownloadProgress{
+					Status: "failed",
+					Error:  cerr,
+				})
+			}
+			return cerr
+		}
+	}
 
 	// 如果下载文件以 .zip 或 .tar.gz 结尾，则解压文件
 	if strings.HasSuffix(downloadFileName, ".zip") || strings.HasSuffix(downloadFileName, ".tar.gz") {
@@ -202,7 +341,7 @@ func (p *DownloadedTool) DownloadTool() error {
 				Status: "extracting",
 			})
 		}
-		err = extractDownloadedFile(tmpPath)
+		err = extractDownloadedFile(tmpPath, toolFolder)
 		if err != nil {
 			if p.progressCallback != nil {
 				p.progressCallback(DownloadProgress{
@@ -214,16 +353,18 @@ func (p *DownloadedTool) DownloadTool() error {
 		}
 	}
 
-	// delete the downloaded file
-	err = os.Remove(tmpPath)
-	if err != nil {
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "failed",
-				Error:  err,
-			})
+	// delete the downloaded file if exists
+	if _, err := os.Stat(tmpPath); err == nil {
+		err = os.Remove(tmpPath)
+		if err != nil {
+			if p.progressCallback != nil {
+				p.progressCallback(DownloadProgress{
+					Status: "failed",
+					Error:  err,
+				})
+			}
+			return err
 		}
-		return err
 	}
 
 	if p.progressCallback != nil {
@@ -232,6 +373,28 @@ func (p *DownloadedTool) DownloadTool() error {
 		})
 	}
 
+	return nil
+}
+
+// GetPartialDownloadInfo returns downloaded size of temp file and last known total size
+func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
+	url := p.getDownloadUrl()
+	downloadFileName, err := getFileNameFromURL(url)
+	if err != nil {
+		return 0, 0, err
+	}
+	toolFolder := p.GetToolFolder()
+	tmpPath := filepath.Join(toolFolder, downloadFileName)
+	var existingSize int64
+	if stat, err := os.Stat(tmpPath); err == nil {
+		existingSize = stat.Size()
+	}
+	return existingSize, p.lastTotalBytes, nil
+}
+
+// Pause signals the current download loop to stop gracefully
+func (p *DownloadedTool) Pause() error {
+	atomic.StoreInt32(&p.paused, 1)
 	return nil
 }
 
@@ -248,34 +411,92 @@ func getFileNameFromURL(rawURL string) (string, error) {
 	return fileName, nil
 }
 
-func extractDownloadedFile(path string) error {
+func extractDownloadedFile(path string, toolFolder string) error {
+	// Create temporary extraction folder
+	tmpExtractFolder := filepath.Join(filepath.Dir(toolFolder), ".tmp_"+filepath.Base(toolFolder))
+
+	// Remove any existing temporary folder
+	if _, err := os.Stat(tmpExtractFolder); err == nil {
+		if err := os.RemoveAll(tmpExtractFolder); err != nil {
+			return fmt.Errorf("failed to clean up temporary folder: %w", err)
+		}
+	}
+
+	// Create the temporary folder
+	if err := os.MkdirAll(tmpExtractFolder, 0755); err != nil {
+		return fmt.Errorf("failed to create temporary extraction folder: %w", err)
+	}
+
+	// Extract to temporary folder
+	var err error
 	if strings.HasSuffix(path, ".zip") {
-		return extractZipFile(path, filepath.Dir(path))
+		err = extractZipFile(path, tmpExtractFolder)
 	} else if strings.HasSuffix(path, ".tar.gz") {
-		return extractTarGzFile(path)
+		err = extractTarGzFile(path, tmpExtractFolder)
 	} else {
 		return fmt.Errorf("unsupported file format: %s", path)
 	}
+
+	if err != nil {
+		// Clean up temporary folder on error
+		if rmErr := os.RemoveAll(tmpExtractFolder); rmErr != nil {
+			return fmt.Errorf("failed to clean up temporary folder after extraction error: %w", rmErr)
+		}
+		return err
+	}
+
+	// Atomic move: rename temporary folder to target folder
+	// First remove the target folder if it exists (but it shouldn't since we check DoesToolExist())
+	if _, err := os.Stat(toolFolder); err == nil {
+		if err := os.RemoveAll(toolFolder); err != nil {
+			if rmErr := os.RemoveAll(tmpExtractFolder); rmErr != nil {
+				return fmt.Errorf("failed to remove existing target folder: %w; also failed to clean up temp folder: %v", err, rmErr)
+			}
+			return fmt.Errorf("failed to remove existing target folder: %w", err)
+		}
+	}
+
+	// Atomic rename operation
+	if err := os.Rename(tmpExtractFolder, toolFolder); err != nil {
+		if rmErr := os.RemoveAll(tmpExtractFolder); rmErr != nil {
+			return fmt.Errorf("failed to move extracted files to target folder: %w; also failed to clean up temp folder: %v", err, rmErr)
+		}
+		return fmt.Errorf("failed to move extracted files to target folder: %w", err)
+	}
+
+	return nil
 }
 
 // 解压 zip 文件
 func extractZipFile(zipPath string, dest string) error {
 	r, err := zip.OpenReader(zipPath)
+	if r != nil {
+		defer func() {
+			if cerr := r.Close(); cerr != nil {
+				log.Printf("关闭 zip.Reader 时出错: %v", cerr)
+			}
+		}()
+	}
 	if err != nil {
 		return err
 	}
-	defer r.Close()
 
 	for _, f := range r.File {
 		rc, err := f.Open()
 		if err != nil {
 			return err
 		}
-		defer rc.Close()
+		defer func() {
+			if cerr := rc.Close(); cerr != nil {
+				log.Printf("关闭 zip 文件时出错: %v", cerr)
+			}
+		}()
 
 		fpath := filepath.Join(dest, f.Name)
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(fpath, os.ModePerm)
+			if err := os.MkdirAll(fpath, os.ModePerm); err != nil {
+				return err
+			}
 		} else {
 			var dir string
 			if lastIndex := strings.LastIndex(fpath, string(os.PathSeparator)); lastIndex > -1 {
@@ -288,10 +509,16 @@ func extractZipFile(zipPath string, dest string) error {
 			}
 			f, err := os.OpenFile(
 				fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+			if f != nil {
+				defer func() {
+					if cerr := f.Close(); cerr != nil {
+						log.Printf("关闭解压后的文件时出错: %v", cerr)
+					}
+				}()
+			}
 			if err != nil {
 				return err
 			}
-			defer f.Close()
 
 			_, err = io.Copy(f, rc)
 			if err != nil {
@@ -302,13 +529,17 @@ func extractZipFile(zipPath string, dest string) error {
 	return nil
 }
 
-func extractTarGzFile(path string) error {
+func extractTarGzFile(path string, dest string) error {
 	// Open the tar.gz file for reading
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			log.Printf("关闭 gz 文件时出错: %v", cerr)
+		}
+	}()
 
 	// Create a gzip reader
 	gzReader, err := gzip.NewReader(file)
@@ -331,7 +562,7 @@ func extractTarGzFile(path string) error {
 		}
 
 		// Determine the file path for the extracted file
-		targetPath := filepath.Join(filepath.Dir(path), header.Name)
+		targetPath := filepath.Join(dest, header.Name)
 
 		// Check if the file is a directory
 		if header.FileInfo().IsDir() {
