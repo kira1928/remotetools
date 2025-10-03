@@ -10,6 +10,8 @@ The web UI provides a browser-based interface for managing tool installations. I
 - **SSE Progress Tracking**: Server-Sent Events for real-time download speed and progress
 - **Modern UI**: Responsive design with beautiful gradients and smooth animations
 - **Multi-version Support**: View and manage different versions of the same tool
+- **Multi-language Support**: Switch between English and Chinese, with preference saved in localStorage
+- **Simple Technology**: Pure HTML5/CSS/JS without complex frameworks (total size ~24KB)
 
 ## Running the Example
 
@@ -71,6 +73,13 @@ func main() {
 - Install/Reinstall buttons
 - Live progress bars during installation
 - Responsive grid layout
+- **Language switcher (English/Chinese) with localStorage persistence**
+
+### Multi-language Support
+- Automatically detects browser language on first visit
+- Supports English and Chinese
+- Language preference saved in localStorage
+- Seamless switching without page reload
 
 ## API Endpoints
 
@@ -84,9 +93,18 @@ func main() {
 The implementation uses an adapter pattern to avoid import cycles:
 
 1. **pkg/webui** - Web server and HTTP handlers (no dependency on tools package)
+   - `server.go` - Server lifecycle management
+   - `handlers.go` - HTTP handlers with Go embed for frontend files
+   - `frontend/` - Frontend resources (HTML, CSS, JavaScript)
+     - `index.html` - Main page structure
+     - `style.css` - Styling (~3KB)
+     - `app.js` - Application logic (~6KB)
+     - `i18n.js` - Internationalization support (~3KB)
 2. **pkg/tools/webui_adapter.go** - Adapter implementing the webui.APIAdapter interface
 3. **pkg/tools/downloaded_tool.go** - Progress tracking with callback support
 4. **pkg/tools/tools.go** - WebUI management methods on the main API
+
+The frontend files are embedded into the Go binary using `//go:embed`, making deployment simple with no external dependencies.
 
 ## Screenshots
 
