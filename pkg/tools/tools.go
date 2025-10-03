@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kira1928/remotetools/pkg/config"
+	"github.com/kira1928/remotetools/pkg/webui"
 )
 
 type Tool interface {
@@ -37,6 +38,7 @@ var (
 type API struct {
 	config        config.Config
 	toolInstances map[string]Tool
+	webUIServer   *webui.WebUIServer
 }
 
 func (p *API) LoadConfig(path string) (err error) {
@@ -183,9 +185,39 @@ func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error
 func init() {
 	instance = &API{
 		toolInstances: make(map[string]Tool),
+		webUIServer:   webui.NewWebUIServer(),
 	}
+	// Set the webui adapter to avoid import cycles
+	webui.SetAPIAdapter(&webuiAdapter{api: instance})
 }
 
 func Get() *API {
 	return instance
+}
+
+// GetConfig returns the current configuration
+func (p *API) GetConfig() config.Config {
+	return p.config
+}
+
+// StartWebUI starts the web UI server
+// If port is 0, a random available port will be chosen
+func (p *API) StartWebUI(port int) error {
+	return p.webUIServer.Start(port)
+}
+
+// StopWebUI stops the web UI server
+func (p *API) StopWebUI() error {
+	return p.webUIServer.Stop()
+}
+
+// GetWebUIStatus returns the current status of the web UI server
+func (p *API) GetWebUIStatus() webui.ServerStatus {
+	return p.webUIServer.GetStatus()
+}
+
+// GetWebUIPort returns the port the web UI server is running on
+// Returns 0 if the server is not running
+func (p *API) GetWebUIPort() int {
+	return p.webUIServer.GetPort()
 }
