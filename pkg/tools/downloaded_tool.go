@@ -43,18 +43,6 @@ func (p *DownloadedTool) DownloadTool() error {
 
 	url := p.getDownloadUrl()
 
-	// download tool using the obtained URL
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// check if the response status code is 200
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
-	}
-
 	// get the file name from the URL
 	downloadFileName, err := getFileNameFromURL(url)
 	if err != nil {
@@ -65,16 +53,63 @@ func (p *DownloadedTool) DownloadTool() error {
 
 	// Create the directory if it does not exist
 	if _, err := os.Stat(toolFolder); os.IsNotExist(err) {
-		err = os.MkdirAll(toolFolder, 0755) // You can adjust the file permission as needed
+		err = os.MkdirAll(toolFolder, 0755)
 		if err != nil {
 			return err
 		}
 	}
 
+	// Clean up any leftover temporary extraction folders
+	tmpExtractFolder := filepath.Join(filepath.Dir(toolFolder), ".tmp_"+filepath.Base(toolFolder))
+	if _, err := os.Stat(tmpExtractFolder); err == nil {
+		os.RemoveAll(tmpExtractFolder)
+	}
+
 	tmpPath := filepath.Join(toolFolder, downloadFileName)
-	out, err := os.Create(tmpPath)
+
+	// Check if partial download exists to support resumable download
+	var existingSize int64
+	if stat, err := os.Stat(tmpPath); err == nil {
+		existingSize = stat.Size()
+	}
+
+	// Create HTTP request with Range header for resumable download
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
+	}
+
+	if existingSize > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
+	}
+
+	// download tool using the obtained URL
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// check if the response status code is 200 (full content) or 206 (partial content)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
+	}
+
+	// Open file for writing (create or append)
+	var out *os.File
+	if resp.StatusCode == http.StatusPartialContent && existingSize > 0 {
+		// Append to existing file
+		out, err = os.OpenFile(tmpPath, os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Create new file (server doesn't support resume or no existing file)
+		out, err = os.Create(tmpPath)
+		if err != nil {
+			return err
+		}
 	}
 
 	// write the body to file
@@ -87,7 +122,7 @@ func (p *DownloadedTool) DownloadTool() error {
 
 	// 如果下载文件以 .zip 或 .tar.gz 结尾，则解压文件
 	if strings.HasSuffix(downloadFileName, ".zip") || strings.HasSuffix(downloadFileName, ".tar.gz") {
-		err = extractDownloadedFile(tmpPath)
+		err = extractDownloadedFile(tmpPath, toolFolder)
 		if err != nil {
 			return err
 		}
@@ -115,14 +150,54 @@ func getFileNameFromURL(rawURL string) (string, error) {
 	return fileName, nil
 }
 
-func extractDownloadedFile(path string) error {
+func extractDownloadedFile(path string, toolFolder string) error {
+	// Create temporary extraction folder
+	tmpExtractFolder := filepath.Join(filepath.Dir(toolFolder), ".tmp_"+filepath.Base(toolFolder))
+	
+	// Remove any existing temporary folder
+	if _, err := os.Stat(tmpExtractFolder); err == nil {
+		if err := os.RemoveAll(tmpExtractFolder); err != nil {
+			return fmt.Errorf("failed to clean up temporary folder: %w", err)
+		}
+	}
+	
+	// Create the temporary folder
+	if err := os.MkdirAll(tmpExtractFolder, 0755); err != nil {
+		return fmt.Errorf("failed to create temporary extraction folder: %w", err)
+	}
+	
+	// Extract to temporary folder
+	var err error
 	if strings.HasSuffix(path, ".zip") {
-		return extractZipFile(path, filepath.Dir(path))
+		err = extractZipFile(path, tmpExtractFolder)
 	} else if strings.HasSuffix(path, ".tar.gz") {
-		return extractTarGzFile(path)
+		err = extractTarGzFile(path, tmpExtractFolder)
 	} else {
 		return fmt.Errorf("unsupported file format: %s", path)
 	}
+	
+	if err != nil {
+		// Clean up temporary folder on error
+		os.RemoveAll(tmpExtractFolder)
+		return err
+	}
+	
+	// Atomic move: rename temporary folder to target folder
+	// First remove the target folder if it exists (but it shouldn't since we check DoesToolExist())
+	if _, err := os.Stat(toolFolder); err == nil {
+		if err := os.RemoveAll(toolFolder); err != nil {
+			os.RemoveAll(tmpExtractFolder)
+			return fmt.Errorf("failed to remove existing target folder: %w", err)
+		}
+	}
+	
+	// Atomic rename operation
+	if err := os.Rename(tmpExtractFolder, toolFolder); err != nil {
+		os.RemoveAll(tmpExtractFolder)
+		return fmt.Errorf("failed to move extracted files to target folder: %w", err)
+	}
+	
+	return nil
 }
 
 // 解压 zip 文件
@@ -169,7 +244,7 @@ func extractZipFile(zipPath string, dest string) error {
 	return nil
 }
 
-func extractTarGzFile(path string) error {
+func extractTarGzFile(path string, dest string) error {
 	// Open the tar.gz file for reading
 	file, err := os.Open(path)
 	if err != nil {
@@ -198,7 +273,7 @@ func extractTarGzFile(path string) error {
 		}
 
 		// Determine the file path for the extracted file
-		targetPath := filepath.Join(filepath.Dir(path), header.Name)
+		targetPath := filepath.Join(dest, header.Name)
 
 		// Check if the file is a directory
 		if header.FileInfo().IsDir() {
