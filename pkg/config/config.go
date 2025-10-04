@@ -6,8 +6,9 @@ import (
 	"os"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
+
+	semver "github.com/blang/semver/v4"
 )
 
 type ToolConfig struct {
@@ -97,7 +98,7 @@ func LoadConfig(path string) (conf Config, err error) {
 		DownloadURL OsArchSpecificString `json:"downloadUrl"`
 		PathToEntry OsArchSpecificString `json:"pathToEntry"`
 	}
-	
+
 	err = json.Unmarshal(data, &tempData)
 	if err != nil {
 		return
@@ -145,50 +146,19 @@ func GetLatestVersion(versions []string) string {
 // compareVersions compares two version strings
 // Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if v1 == v2
 func compareVersions(v1, v2 string) int {
-	parts1 := strings.Split(v1, ".")
-	parts2 := strings.Split(v2, ".")
-
-	maxLen := len(parts1)
-	if len(parts2) > maxLen {
-		maxLen = len(parts2)
+	// 使用 ParseTolerant 兼容 v 前缀、缺少补零（1 或 1.2）、预发布与构建元数据
+	sv1, err1 := semver.ParseTolerant(strings.TrimSpace(v1))
+	sv2, err2 := semver.ParseTolerant(strings.TrimSpace(v2))
+	if err1 == nil && err2 == nil {
+		return sv1.Compare(sv2)
 	}
-
-	for i := 0; i < maxLen; i++ {
-		var num1, num2 int
-
-		if i < len(parts1) {
-			// Parse the numeric part, ignoring any non-numeric suffix
-			numStr := parts1[i]
-			for j, c := range numStr {
-				if c < '0' || c > '9' {
-					numStr = numStr[:j]
-					break
-				}
-			}
-			if numStr != "" {
-				num1, _ = strconv.Atoi(numStr)
-			}
-		}
-
-		if i < len(parts2) {
-			numStr := parts2[i]
-			for j, c := range numStr {
-				if c < '0' || c > '9' {
-					numStr = numStr[:j]
-					break
-				}
-			}
-			if numStr != "" {
-				num2, _ = strconv.Atoi(numStr)
-			}
-		}
-
-		if num1 > num2 {
-			return 1
-		} else if num1 < num2 {
-			return -1
-		}
+	// 如遇到非标准字符串，做一个保底的字符串比较（尽量避免自实现细节）
+	if c := strings.Compare(v1, v2); c < 0 {
+		return -1
+	} else if c > 0 {
+		return 1
 	}
-
 	return 0
 }
+
+// 保持 strconv 的导入以免 gofmt 误删顺序（其他文件仍使用）。
