@@ -240,3 +240,51 @@ h1 {
     font-size: 1.2em;
     padding: 40px;
 }
+
+/* 二级按钮区域 */
+.tool-meta-row {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0;
+}
+
+.secondary-btn {
+    flex: 1 1 auto;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    background: #f3f4f6;
+    color: #333;
+}
+
+.secondary-btn:hover {
+    background: #e5e7eb;
+}
+
+/* 二级按钮激活态，高亮当前展开来源按钮 */
+.secondary-btn.active {
+    background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+    color: #4f46e5;
+    /* indigo-600 */
+    border: 1px solid #c7d2fe;
+    /* indigo-200 */
+}
+
+.secondary-btn.active:hover {
+    background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
+}
+
+/* 折叠面板 */
+.collapsible-panel {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}

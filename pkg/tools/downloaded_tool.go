@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 
 	"github.com/kira1928/remotetools/pkg/config"
+	"github.com/kira1928/remotetools/pkg/webui"
+	xz "github.com/ulikunitz/xz"
 )
 
 // DownloadProgress represents the download progress information
@@ -96,24 +98,55 @@ func (p *DownloadedTool) SetProgressCallback(callback ProgressCallback) {
 	p.progressCallback = callback
 }
 
+// emitProgress 会在有自定义回调时调用回调；否则将消息广播到 WebUI 的 SSE
+func (p *DownloadedTool) emitProgress(dp DownloadProgress) {
+	if p.progressCallback != nil {
+		p.progressCallback(dp)
+		return
+	}
+	// 回退到全局广播
+	msg := webui.ProgressMessage{
+		ToolName:        p.ToolName,
+		Version:         p.Version,
+		Status:          dp.Status,
+		TotalBytes:      dp.TotalBytes,
+		DownloadedBytes: dp.DownloadedBytes,
+		Speed:           dp.Speed,
+	}
+	if dp.Error != nil {
+		msg.Error = dp.Error.Error()
+	}
+	webui.EmitProgress(msg)
+}
+
 func (p *DownloadedTool) Install() error {
-	return p.DownloadTool()
+	// 对同一工具目录加锁，防止并发安装/卸载/执行等冲突
+	tf := p.GetToolFolder()
+	mu := getToolMutex(tf)
+	if !mu.TryLock() {
+		return ErrToolBusy
+	}
+	defer mu.Unlock()
+	// 标记活动任务
+	markActive(p.ToolName, p.Version)
+	defer unmarkActive(p.ToolName, p.Version)
+	return p.downloadTool()
+}
+
+func (p *DownloadedTool) GetInstallSource() string {
+	return p.getDownloadUrl()
 }
 
 func (p *DownloadedTool) getDownloadUrl() string {
 	return p.DownloadURL.Value
 }
 
-func (p *DownloadedTool) DownloadTool() error {
+func (p *DownloadedTool) downloadTool() error {
 	// 开始/恢复下载前清除暂停标记
 	atomic.StoreInt32(&p.paused, 0)
 	// check if file already exists
 	if p.DoesToolExist() {
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "completed",
-			})
-		}
+		p.emitProgress(DownloadProgress{Status: "completed"})
 		return nil
 	}
 
@@ -122,12 +155,7 @@ func (p *DownloadedTool) DownloadTool() error {
 	// get the file name from the URL
 	downloadFileName, err := getFileNameFromURL(url)
 	if err != nil {
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "failed",
-				Error:  err,
-			})
-		}
+		p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 		return err
 	}
 
@@ -137,12 +165,7 @@ func (p *DownloadedTool) DownloadTool() error {
 	if _, err := os.Stat(toolFolder); os.IsNotExist(err) {
 		err = os.MkdirAll(toolFolder, 0755)
 		if err != nil {
-			if p.progressCallback != nil {
-				p.progressCallback(DownloadProgress{
-					Status: "failed",
-					Error:  err,
-				})
-			}
+			p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 			return err
 		}
 	}
@@ -166,12 +189,7 @@ func (p *DownloadedTool) DownloadTool() error {
 	// Create HTTP request with Range header for resumable download
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "failed",
-				Error:  err,
-			})
-		}
+		p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 		return err
 	}
 
@@ -183,12 +201,7 @@ func (p *DownloadedTool) DownloadTool() error {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "failed",
-				Error:  err,
-			})
-		}
+		p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 		return err
 	}
 	defer resp.Body.Close()
@@ -225,12 +238,7 @@ func (p *DownloadedTool) DownloadTool() error {
 	// check if the response status code is 200 (full content) or 206 (partial content)
 	if !skipDownload && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		err := fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "failed",
-				Error:  err,
-			})
-		}
+		p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 		return err
 	}
 
@@ -241,31 +249,21 @@ func (p *DownloadedTool) DownloadTool() error {
 			// Append to existing file
 			out, err = os.OpenFile(tmpPath, os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
-				if p.progressCallback != nil {
-					p.progressCallback(DownloadProgress{
-						Status: "failed",
-						Error:  err,
-					})
-				}
+				p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 				return err
 			}
 		} else {
 			// Create new file (server doesn't support resume or no existing file)
 			out, err = os.Create(tmpPath)
 			if err != nil {
-				if p.progressCallback != nil {
-					p.progressCallback(DownloadProgress{
-						Status: "failed",
-						Error:  err,
-					})
-				}
+				p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 				return err
 			}
 		}
 
-		// Create progress reader if callback is set
+		// Create progress reader to emit periodic updates (even when started outside WebUI)
 		var reader io.Reader = resp.Body
-		if p.progressCallback != nil {
+		{
 			// Calculate total bytes: if resuming, add existing size to content length
 			totalBytes := resp.ContentLength
 			if resp.StatusCode == http.StatusPartialContent && existingSize > 0 {
@@ -279,7 +277,7 @@ func (p *DownloadedTool) DownloadTool() error {
 				downloadedBytes: existingSize, // Start from existing size if resuming
 				lastUpdate:      time.Now(),
 				lastBytes:       existingSize,
-				callback:        p.progressCallback,
+				callback:        p.emitProgress,
 				pausedFlag:      &p.paused,
 			}
 			reader = pr
@@ -289,66 +287,35 @@ func (p *DownloadedTool) DownloadTool() error {
 		_, err = io.Copy(out, reader)
 		if err != nil {
 			if cerr := out.Close(); cerr != nil {
-				if p.progressCallback != nil {
-					p.progressCallback(DownloadProgress{
-						Status: "failed",
-						Error:  cerr,
-					})
-				}
+				p.emitProgress(DownloadProgress{Status: "failed", Error: cerr})
 				return cerr
 			}
 			// distinguish pause vs real error
 			if err == errPaused {
-				if p.progressCallback != nil {
-					// 读取当前临时文件大小，作为已下载字节数
-					var currentSize int64
-					if stat, sErr := os.Stat(tmpPath); sErr == nil {
-						currentSize = stat.Size()
-					}
-					p.progressCallback(DownloadProgress{
-						TotalBytes:      p.lastTotalBytes,
-						DownloadedBytes: currentSize,
-						Speed:           0,
-						Status:          "paused",
-					})
+				// 读取当前临时文件大小，作为已下载字节数
+				var currentSize int64
+				if stat, sErr := os.Stat(tmpPath); sErr == nil {
+					currentSize = stat.Size()
 				}
+				p.emitProgress(DownloadProgress{TotalBytes: p.lastTotalBytes, DownloadedBytes: currentSize, Speed: 0, Status: "paused"})
 				return nil
 			} else {
-				if p.progressCallback != nil {
-					p.progressCallback(DownloadProgress{
-						Status: "failed",
-						Error:  err,
-					})
-				}
+				p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 				return err
 			}
 		}
 		if cerr := out.Close(); cerr != nil {
-			if p.progressCallback != nil {
-				p.progressCallback(DownloadProgress{
-					Status: "failed",
-					Error:  cerr,
-				})
-			}
+			p.emitProgress(DownloadProgress{Status: "failed", Error: cerr})
 			return cerr
 		}
 	}
 
-	// 如果下载文件以 .zip 或 .tar.gz 结尾，则解压文件
-	if strings.HasSuffix(downloadFileName, ".zip") || strings.HasSuffix(downloadFileName, ".tar.gz") {
-		if p.progressCallback != nil {
-			p.progressCallback(DownloadProgress{
-				Status: "extracting",
-			})
-		}
+	// 如果下载文件以 .zip、.tar.gz、.tar.xz 结尾，则解压文件
+	if strings.HasSuffix(downloadFileName, ".zip") || strings.HasSuffix(downloadFileName, ".tar.gz") || strings.HasSuffix(downloadFileName, ".tar.xz") {
+		p.emitProgress(DownloadProgress{Status: "extracting"})
 		err = extractDownloadedFile(tmpPath, toolFolder)
 		if err != nil {
-			if p.progressCallback != nil {
-				p.progressCallback(DownloadProgress{
-					Status: "failed",
-					Error:  err,
-				})
-			}
+			p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 			return err
 		}
 	}
@@ -357,29 +324,20 @@ func (p *DownloadedTool) DownloadTool() error {
 	if _, err := os.Stat(tmpPath); err == nil {
 		err = os.Remove(tmpPath)
 		if err != nil {
-			if p.progressCallback != nil {
-				p.progressCallback(DownloadProgress{
-					Status: "failed",
-					Error:  err,
-				})
-			}
+			p.emitProgress(DownloadProgress{Status: "failed", Error: err})
 			return err
 		}
 	}
 
-	if p.progressCallback != nil {
-		p.progressCallback(DownloadProgress{
-			Status: "completed",
-		})
-	}
+	p.emitProgress(DownloadProgress{Status: "completed"})
 
 	return nil
 }
 
 // GetPartialDownloadInfo returns downloaded size of temp file and last known total size
 func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
-	url := p.getDownloadUrl()
-	downloadFileName, err := getFileNameFromURL(url)
+	rawURL := p.getDownloadUrl()
+	downloadFileName, err := getFileNameFromURL(rawURL)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -389,7 +347,26 @@ func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
 	if stat, err := os.Stat(tmpPath); err == nil {
 		existingSize = stat.Size()
 	}
-	return existingSize, p.lastTotalBytes, nil
+	// 优先使用已记录的总大小；如果尚未获取到（为 0），尝试通过 HEAD 获取
+	total := p.lastTotalBytes
+	if total == 0 && rawURL != "" {
+		client := &http.Client{}
+		if req, herr := http.NewRequest("HEAD", rawURL, nil); herr == nil {
+			if resp, herr2 := client.Do(req); herr2 == nil {
+				if resp != nil {
+					defer resp.Body.Close()
+				}
+				if resp.StatusCode == http.StatusOK {
+					if cl := resp.Header.Get("Content-Length"); cl != "" {
+						if s, perr := strconv.ParseInt(cl, 10, 64); perr == nil {
+							total = s
+						}
+					}
+				}
+			}
+		}
+	}
+	return existingSize, total, nil
 }
 
 // Pause signals the current download loop to stop gracefully
@@ -433,6 +410,8 @@ func extractDownloadedFile(path string, toolFolder string) error {
 		err = extractZipFile(path, tmpExtractFolder)
 	} else if strings.HasSuffix(path, ".tar.gz") {
 		err = extractTarGzFile(path, tmpExtractFolder)
+	} else if strings.HasSuffix(path, ".tar.xz") {
+		err = extractTarXzFile(path, tmpExtractFolder)
 	} else {
 		return fmt.Errorf("unsupported file format: %s", path)
 	}
@@ -445,7 +424,16 @@ func extractDownloadedFile(path string, toolFolder string) error {
 		return err
 	}
 
-	// Atomic move: rename temporary folder to target folder
+	// 如果解压后顶层只有一个目录，则视为冗余目录：
+	// 直接将该子目录提升为目标目录，避免多一层路径。
+	sourceToMove := tmpExtractFolder
+	usedSingleDir := false
+	if entries, rdErr := os.ReadDir(tmpExtractFolder); rdErr == nil && len(entries) == 1 && entries[0].IsDir() {
+		sourceToMove = filepath.Join(tmpExtractFolder, entries[0].Name())
+		usedSingleDir = true
+	}
+
+	// Atomic move: rename source folder to target folder
 	// First remove the target folder if it exists (but it shouldn't since we check DoesToolExist())
 	if _, err := os.Stat(toolFolder); err == nil {
 		if err := os.RemoveAll(toolFolder); err != nil {
@@ -456,12 +444,16 @@ func extractDownloadedFile(path string, toolFolder string) error {
 		}
 	}
 
-	// Atomic rename operation
-	if err := os.Rename(tmpExtractFolder, toolFolder); err != nil {
+	if err := os.Rename(sourceToMove, toolFolder); err != nil {
 		if rmErr := os.RemoveAll(tmpExtractFolder); rmErr != nil {
 			return fmt.Errorf("failed to move extracted files to target folder: %w; also failed to clean up temp folder: %v", err, rmErr)
 		}
 		return fmt.Errorf("failed to move extracted files to target folder: %w", err)
+	}
+
+	// 如果提升了单一子目录，tmpExtractFolder 现在应为空，做一次清理
+	if usedSingleDir {
+		_ = os.RemoveAll(tmpExtractFolder)
 	}
 
 	return nil
@@ -588,5 +580,67 @@ func extractTarGzFile(path string, dest string) error {
 		}
 	}
 
+	return nil
+}
+
+func extractTarXzFile(path string, dest string) error {
+	// Open the tar.xz file for reading
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("关闭 xz 文件时出错: %v", cerr)
+		}
+	}()
+
+	// Create an xz reader
+	xzr, err := xz.NewReader(f)
+	if err != nil {
+		return err
+	}
+
+	// Create a tar reader on top of xz reader
+	tr := tar.NewReader(xzr)
+
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		targetPath := filepath.Join(dest, hdr.Name)
+		if hdr.FileInfo().IsDir() {
+			if err := os.MkdirAll(targetPath, hdr.FileInfo().Mode()); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Ensure parent dir exists
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return err
+		}
+
+		out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, hdr.FileInfo().Mode())
+		if err != nil {
+			return err
+		}
+		if out != nil {
+			defer func() {
+				if cerr := out.Close(); cerr != nil {
+					log.Printf("关闭解压后的文件时出错: %v", cerr)
+				}
+			}()
+		}
+
+		if _, err := io.Copy(out, tr); err != nil {
+			return err
+		}
+	}
 	return nil
 }

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>External Tools Manager</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
     <div class="container">
@@ -24,6 +24,12 @@
             <div class="tool-name"></div>
             <div class="tool-version"></div>
             <div class="tool-status"></div>
+            <div class="tool-meta-row">
+                <button class="secondary-btn folder-btn"></button>
+                <button class="secondary-btn info-btn"></button>
+            </div>
+            <div class="collapsible-panel folder-panel" style="display:none;"></div>
+            <pre class="collapsible-panel info-panel" style="display:none;"></pre>
             <button class="install-btn"></button>
             <button class="pause-btn"></button>
             <button class="resume-btn"></button>
@@ -38,7 +44,7 @@
         </div>
     </template>
 
-    <script src="/static/i18n.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="static/i18n.js"></script>
+    <script src="static/app.js"></script>
 </body>
 </html>

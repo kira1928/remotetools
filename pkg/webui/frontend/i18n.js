@@ -20,7 +20,10 @@ const i18n = {
         failed: 'Installation Failed',
         uninstallFailed: 'Uninstallation Failed',
         error: 'Error',
-        failedToLoad: 'Failed to load tools'
+        failedToLoad: 'Failed to load tools',
+        folder: 'Folder',
+        showInfo: 'Show Info',
+        hideInfo: 'Hide Info'
     },
     zh: {
         title: '外部工具管理器',
@@ -42,7 +45,10 @@ const i18n = {
         failed: '安装失败',
         uninstallFailed: '卸载失败',
         error: '错误',
-        failedToLoad: '加载工具失败'
+        failedToLoad: '加载工具失败',
+        folder: '目录',
+        showInfo: '查看信息',
+        hideInfo: '隐藏信息'
     }
 };
 

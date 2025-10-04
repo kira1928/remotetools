@@ -119,3 +119,61 @@ func (s *WebUIServer) GetPort() int {
 	defer s.mu.RUnlock()
 	return s.port
 }
+
+func (s *WebUIServer) GetAddresses() (addresses []string, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.listener == nil {
+		return nil, fmt.Errorf("server is not running")
+	}
+
+	port := s.port
+	addresses = []string{fmt.Sprintf("localhost:%d", port)}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue // interface down
+		}
+		ua, err := iface.Addrs()
+		if err != nil {
+			continue // ignore error
+		}
+		for _, addr := range ua {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			// 仅加入可对外使用的地址：IPv4 或全局单播 IPv6
+			if v4 := ip.To4(); v4 != nil {
+				key := v4.String()
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				addresses = append(addresses, fmt.Sprintf("http://%s:%d", key, port))
+				continue
+			}
+			// 过滤链路本地 IPv6（如 fe80::），避免不可达/需 zone 的地址
+			if !ip.IsGlobalUnicast() {
+				continue
+			}
+			key := ip.String()
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			addresses = append(addresses, fmt.Sprintf("[%s]:%d", key, port))
+		}
+	}
+	return addresses, nil
+}

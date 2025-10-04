@@ -1,6 +1,11 @@
 package tools
 
 import (
+	"path/filepath"
+	"sort"
+	"strings"
+
+	semver "github.com/blang/semver/v4"
 	"github.com/kira1928/remotetools/pkg/webui"
 )
 
@@ -28,6 +33,21 @@ func (a *webuiAdapter) ListTools() ([]webui.ToolInfo, error) {
 
 		toolsList = append(toolsList, toolInfo)
 	}
+	// 稳定排序：名称升序；同名按语义化版本升序
+	sort.SliceStable(toolsList, func(i, j int) bool {
+		if toolsList[i].Name != toolsList[j].Name {
+			return toolsList[i].Name < toolsList[j].Name
+		}
+		vi := strings.TrimSpace(toolsList[i].Version)
+		vj := strings.TrimSpace(toolsList[j].Version)
+		if svi, err1 := semver.ParseTolerant(vi); err1 == nil {
+			if svj, err2 := semver.ParseTolerant(vj); err2 == nil {
+				return svi.LT(svj)
+			}
+		}
+		// 解析失败时回退到字符串比较
+		return vi < vj
+	})
 
 	return toolsList, nil
 }
@@ -95,4 +115,28 @@ func (a *webuiAdapter) PauseTool(toolName, version string) error {
 		return dt.Pause()
 	}
 	return nil
+}
+
+// GetToolFolder returns the install folder for a tool version
+func (a *webuiAdapter) GetToolFolder(toolName, version string) (string, error) {
+	tool, err := a.api.GetToolWithVersion(toolName, version)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(tool.GetToolPath()), nil
+}
+
+// GetToolInfoString executes printInfoCmd and returns stdout
+func (a *webuiAdapter) GetToolInfoString(toolName, version string) (string, error) {
+	tool, err := a.api.GetToolWithVersion(toolName, version)
+	if err != nil {
+		return "", err
+	}
+	// 若未安装或未配置命令，返回空字符串
+	return tool.ExecAndGetInfoString(), nil
+}
+
+// ListActiveInstalls returns the active installs in the form of tool@version
+func (a *webuiAdapter) ListActiveInstalls() []string {
+	return listActiveDownloads()
 }

@@ -12,10 +12,11 @@ import (
 )
 
 type ToolConfig struct {
-	ToolName    string
-	Version     string
-	DownloadURL OsArchSpecificString `json:"downloadUrl"`
-	PathToEntry OsArchSpecificString `json:"pathToEntry"`
+	ToolName     string
+	Version      string
+	DownloadURL  OsArchSpecificString `json:"downloadUrl"`
+	PathToEntry  OsArchSpecificString `json:"pathToEntry"`
+	PrintInfoCmd StringArray          `json:"printInfoCmd,omitempty"`
 }
 
 type OsArchSpecificString struct {
@@ -24,6 +25,30 @@ type OsArchSpecificString struct {
 
 type Config struct {
 	ToolConfigs map[string]*ToolConfig `json:"tools"`
+}
+
+// StringArray 是对 []string 的轻量封装，支持字符串与数组两种 JSON 形式
+type StringArray []string
+
+func (s *StringArray) UnmarshalJSON(data []byte) error {
+	// 尝试按数组解析
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*s = arr
+		return nil
+	}
+	// 回退为单一字符串
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		if str == "" {
+			*s = nil
+		} else {
+			*s = []string{str}
+		}
+		return nil
+	}
+	// 两种都失败，返回原始错误
+	return fmt.Errorf("invalid StringArray: %s", string(data))
 }
 
 func (p *OsArchSpecificString) UnmarshalJSON(data []byte) (err error) {
@@ -91,12 +116,16 @@ func LoadConfig(path string) (conf Config, err error) {
 	if err != nil {
 		return
 	}
+	return LoadConfigFromBytes(data)
+}
 
+func LoadConfigFromBytes(data []byte) (conf Config, err error) {
 	// Unmarshal the JSON data into a temporary structure
 	// New format: {"toolName": {"version": {"downloadUrl": {}, "pathToEntry": {}}}}
 	var tempData map[string]map[string]struct {
-		DownloadURL OsArchSpecificString `json:"downloadUrl"`
-		PathToEntry OsArchSpecificString `json:"pathToEntry"`
+		DownloadURL  OsArchSpecificString `json:"downloadUrl"`
+		PathToEntry  OsArchSpecificString `json:"pathToEntry"`
+		PrintInfoCmd StringArray          `json:"printInfoCmd"`
 	}
 
 	err = json.Unmarshal(data, &tempData)
@@ -109,16 +138,13 @@ func LoadConfig(path string) (conf Config, err error) {
 	for toolName, versions := range tempData {
 		// For each version, create a separate key with toolName@version
 		for version, versionData := range versions {
-			key := toolName
-			if len(versions) > 1 {
-				// If multiple versions exist, use toolName@version as key
-				key = toolName + "@" + version
-			}
+			key := toolName + "@" + version
 			conf.ToolConfigs[key] = &ToolConfig{
-				ToolName:    toolName,
-				Version:     version,
-				DownloadURL: versionData.DownloadURL,
-				PathToEntry: versionData.PathToEntry,
+				ToolName:     toolName,
+				Version:      version,
+				DownloadURL:  versionData.DownloadURL,
+				PathToEntry:  versionData.PathToEntry,
+				PrintInfoCmd: versionData.PrintInfoCmd,
 			}
 		}
 	}

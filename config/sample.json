@@ -20,7 +20,10 @@
         "darwin": "dotnet",
         "linux": "dotnet",
         "windows": "dotnet.exe"
-      }
+      },
+      "printInfoCmd": [
+        "--info"
+      ]
     },
     "8.0.4": {
       "downloadUrl": {
@@ -42,7 +45,10 @@
         "darwin": "dotnet",
         "linux": "dotnet",
         "windows": "dotnet.exe"
-      }
+      },
+      "printInfoCmd": [
+        "--info"
+      ]
     }
   }
 }

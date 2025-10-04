@@ -20,6 +20,9 @@ type Tool interface {
 	CreateExecuteCmd(args ...string) (cmd *exec.Cmd, err error)
 	GetVersion() string
 	GetToolPath() string
+	GetInstallSource() string
+	ExecAndGetInfoString() string
+	GetPrintInfoCmd() []string
 }
 
 var toolFolder string = "external_tools"
@@ -47,6 +50,11 @@ func (p *API) LoadConfig(path string) (err error) {
 	return
 }
 
+func (p *API) LoadConfigFromBytes(data []byte) (err error) {
+	p.config, err = config.LoadConfigFromBytes(data)
+	return
+}
+
 func (p *API) GetTool(toolName string) (tool Tool, err error) {
 	return p.GetToolAuto(toolName, AutoVersionPreferInstalled)
 }
@@ -66,7 +74,8 @@ const (
 // GetToolAuto gets a tool with automatic version selection based on the strategy
 func (p *API) GetToolAuto(toolName string, strategy AutoVersionStrategy) (tool Tool, err error) {
 	// First check if there's a direct match (single version case)
-	if tool, ok := p.toolInstances[toolName]; ok && tool != nil {
+	ok := false
+	if tool, ok = p.toolInstances[toolName]; ok && tool != nil {
 		return tool, nil
 	}
 
@@ -165,7 +174,7 @@ func (p *API) GetToolInstalled(toolName string) (tool Tool, err error) {
 
 func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error) {
 	key := toolName + "@" + version
-	
+
 	var ok bool
 	if tool, ok = p.toolInstances[key]; ok && tool != nil {
 		return
@@ -186,24 +195,24 @@ func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error
 // CleanupTrash removes any leftover .trash-* folders in the tool directory
 func CleanupTrash() {
 	toolDir := GetToolFolder()
-	
+
 	// Check if the tool directory exists
 	if _, err := os.Stat(toolDir); os.IsNotExist(err) {
 		return
 	}
-	
+
 	// Walk through the tool directory
 	filepath.Walk(toolDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip errors and continue
 		}
-		
+
 		// Check if it's a directory and starts with .trash-
 		if info.IsDir() && strings.HasPrefix(info.Name(), ".trash-") {
 			// Try to remove it, but don't fail if we can't
 			os.RemoveAll(path)
 		}
-		
+
 		return nil
 	})
 }
@@ -215,7 +224,7 @@ func init() {
 	}
 	// Set the webui adapter to avoid import cycles
 	webui.SetAPIAdapter(&webuiAdapter{api: instance})
-	
+
 	// Cleanup any leftover trash folders on startup
 	CleanupTrash()
 }
@@ -249,4 +258,8 @@ func (p *API) GetWebUIStatus() webui.ServerStatus {
 // Returns 0 if the server is not running
 func (p *API) GetWebUIPort() int {
 	return p.webUIServer.GetPort()
+}
+
+func (p *API) GetWebUIAddresses() (addresses []string, err error) {
+	return p.webUIServer.GetAddresses()
 }

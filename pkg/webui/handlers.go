@@ -45,6 +45,12 @@ type APIAdapter interface {
 	GetDownloadInfo(toolName, version string) (int64, int64, error)
 	// PauseTool requests pausing current download if in progress
 	PauseTool(toolName, version string) error
+	// GetToolFolder returns the install folder of a tool version
+	GetToolFolder(toolName, version string) (string, error)
+	// GetToolInfoString executes configured printInfoCmd and returns stdout
+	GetToolInfoString(toolName, version string) (string, error)
+	// ListActiveInstalls returns active install keys in the form tool@version
+	ListActiveInstalls() []string
 }
 
 var (
@@ -83,6 +89,8 @@ func (s *WebUIServer) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/active", handleActiveTasks)
 	mux.HandleFunc("/api/pause", handlePause)
 	mux.HandleFunc("/api/status", handleStatus)
+	mux.HandleFunc("/api/tool-path", handleToolPath)
+	mux.HandleFunc("/api/tool-info", handleToolInfo)
 }
 
 // handleIndex serves the main HTML page
@@ -288,6 +296,11 @@ func broadcastProgress(msg ProgressMessage) {
 	}
 }
 
+// EmitProgress is an exported helper to broadcast progress updates from other packages (e.g., tools)
+func EmitProgress(msg ProgressMessage) {
+	broadcastProgress(msg)
+}
+
 // ActiveTasksResponse represents whether SSE is needed and the active tasks
 type ActiveTasksResponse struct {
 	NeedsSSE bool             `json:"needsSSE"`
@@ -296,15 +309,16 @@ type ActiveTasksResponse struct {
 
 // handleActiveTasks returns whether there are active install tasks
 func handleActiveTasks(w http.ResponseWriter, r *http.Request) {
-	activeInstallsMu.RLock()
-	defer activeInstallsMu.RUnlock()
-
-	resp := ActiveTasksResponse{
-		NeedsSSE: len(activeInstalls) > 0,
-		Active:   make([]InstallRequest, 0, len(activeInstalls)),
+	// 从工具 API 查询全局活动安装（包含从 Go 代码发起的任务）
+	var keys []string
+	if apiAdapter != nil {
+		keys = apiAdapter.ListActiveInstalls()
 	}
-
-	for key := range activeInstalls {
+	resp := ActiveTasksResponse{
+		NeedsSSE: len(keys) > 0,
+		Active:   make([]InstallRequest, 0, len(keys)),
+	}
+	for _, key := range keys {
 		// key format: tool@version
 		var tool, ver string
 		if n := len(key); n > 0 {
@@ -412,4 +426,56 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(statuses); err != nil {
 		return
 	}
+}
+
+// handleToolPath returns the install folder path for a tool version
+func handleToolPath(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if apiAdapter == nil {
+		http.Error(w, "API not initialized", http.StatusInternalServerError)
+		return
+	}
+	q := r.URL.Query()
+	toolName := q.Get("toolName")
+	version := q.Get("version")
+	if toolName == "" || version == "" {
+		http.Error(w, "toolName and version are required", http.StatusBadRequest)
+		return
+	}
+	path, err := apiAdapter.GetToolFolder(toolName, version)
+	if err != nil {
+		http.Error(w, "Failed to get path: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"path": path})
+}
+
+// handleToolInfo executes printInfoCmd and returns stdout
+func handleToolInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if apiAdapter == nil {
+		http.Error(w, "API not initialized", http.StatusInternalServerError)
+		return
+	}
+	q := r.URL.Query()
+	toolName := q.Get("toolName")
+	version := q.Get("version")
+	if toolName == "" || version == "" {
+		http.Error(w, "toolName and version are required", http.StatusBadRequest)
+		return
+	}
+	info, err := apiAdapter.GetToolInfoString(toolName, version)
+	if err != nil {
+		http.Error(w, "Failed to get info: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"info": info})
 }
