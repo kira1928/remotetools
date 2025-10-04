@@ -1,7 +1,7 @@
 // Internationalization support
 const i18n = {
     en: {
-        title: 'Remote Tools Manager',
+        title: 'External Tools Manager',
         loading: 'Loading tools...',
         version: 'Version',
         installed: 'Installed',
@@ -23,7 +23,7 @@ const i18n = {
         failedToLoad: 'Failed to load tools'
     },
     zh: {
-        title: '远程工具管理器',
+        title: '外部工具管理器',
         loading: '加载工具中...',
         version: '版本',
         installed: '已安装',
