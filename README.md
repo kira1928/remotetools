@@ -13,6 +13,36 @@ A Go library for managing and executing remote tools with automatic version mana
 - **Real-time Progress**: Live download progress with speed indicators
 - **Multi-language UI**: English and Chinese interface support
 
+Now the repository uses a cross-platform Go build script `build.go`; the Makefile is just a thin wrapper that delegates to it.
+
+Directly with Go:
+
+```bash
+go run -tags buildtool ./build.go help
+go run -tags buildtool ./build.go build        # Build for current platform
+go run -tags buildtool ./build.go debug        # Debug build
+go run -tags buildtool ./build.go release      # Release build
+go run -tags buildtool ./build.go build-all    # Build for all target platforms
+go run -tags buildtool ./build.go test         # Run tests
+go run -tags buildtool ./build.go clean        # Clean artifacts
+```
+
+Or continue to use Make (which calls the above under the hood):
+
+```bash
+make build
+make test
+make release
+make build-all
+```
+
+Optional parameters:
+
+- You can pass GOOS/GOARCH via make, or use `-os/-arch` with `go run`.
+  Examples:
+  - `GOOS=linux GOARCH=amd64 make build`
+  - `go run -tags buildtool ./build.go build -os linux -arch amd64`
+
 ## Quick Start
 
 ### Installation

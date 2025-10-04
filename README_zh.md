@@ -12,13 +12,35 @@
 - **Web UI**：基于浏览器的工具安装管理界面
 - **实时进度**：实时显示下载进度和速度
 - **多语言界面**：支持中英文界面
+现在仓库采用跨平台的 Go 构建脚本 `build.go`，Makefile 仅作为入口调用它。
 
-## 快速开始
-
-### 安装
+直接使用 Go：
 
 ```bash
-go get github.com/kira1928/remotetools
+go run -tags buildtool ./build.go help
+go run -tags buildtool ./build.go build        # 构建当前平台
+go run -tags buildtool ./build.go debug        # Debug 构建
+go run -tags buildtool ./build.go release      # Release 构建
+go run -tags buildtool ./build.go build-all    # 构建全部平台产物
+go run -tags buildtool ./build.go test         # 运行测试
+go run -tags buildtool ./build.go clean        # 清理
+```
+
+或继续使用 Make（内部调用上述命令）：
+
+```bash
+make build
+make test
+make release
+make build-all
+```
+
+可选参数：
+
+- GOOS/GOARCH 环境变量可通过 `make build` 透传，也可用 `go run` 方式传入 `-os/-arch`。
+  例如：
+  - `GOOS=linux GOARCH=amd64 make build`
+  - `go run -tags buildtool ./build.go build -os linux -arch amd64`
 ```
 
 ### 基本使用
