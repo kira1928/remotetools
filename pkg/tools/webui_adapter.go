@@ -20,15 +20,19 @@ func (a *webuiAdapter) ListTools() ([]webui.ToolInfo, error) {
 
 	for _, toolConfig := range a.api.config.ToolConfigs {
 		toolInfo := webui.ToolInfo{
-			Name:      toolConfig.ToolName,
-			Version:   toolConfig.Version,
-			Installed: false,
+			Name:         toolConfig.ToolName,
+			Version:      toolConfig.Version,
+			Installed:    false,
+			Preinstalled: false,
 		}
 
 		// Check if tool is installed
 		tool, err := a.api.GetToolWithVersion(toolConfig.ToolName, toolConfig.Version)
 		if err == nil && tool != nil {
-			toolInfo.Installed = tool.DoesToolExist()
+			if tool.DoesToolExist() {
+				toolInfo.Installed = true
+				toolInfo.Preinstalled = tool.IsFromReadOnlyRootFolder()
+			}
 		}
 
 		toolsList = append(toolsList, toolInfo)

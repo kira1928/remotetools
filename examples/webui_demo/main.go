@@ -10,6 +10,7 @@ import (
 )
 
 func main() {
+	// tools.AddReadOnlyRootFolder("external_tools")
 	// Load configuration
 	err := tools.Get().LoadConfig("config/sample.json")
 	if err != nil {

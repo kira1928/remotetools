@@ -80,6 +80,41 @@ func main() {
 }
 ```
 
+### Multiple tool roots (read-only + read-write)
+
+Tool discovery supports multiple read-only roots plus one writable root. Typical container scenario:
+
+- Image ships tools in read-only directories;
+- At runtime, set a user-mounted volume as the writable directory for optional tools.
+
+Lookup order: read-only roots (in order) -> writable root. If still not found and installation is needed, the tool is downloaded and extracted into the writable root.
+
+```go
+// 1) Configure read-only roots (order matters)
+tools.SetReadOnlyToolFolders([]string{
+  "/opt/tools-ro",
+  "/usr/local/tools-ro",
+})
+
+// 2) Configure writable root (install/uninstall target)
+tools.SetToolFolder("/data/tools")
+
+// 3) Load config and get tool
+api := tools.Get()
+_ = api.LoadConfig("config.json")
+
+t, _ := api.GetTool("mytool")
+if !t.DoesToolExist() {
+  _ = t.Install() // installs into /data/tools
+}
+_ = t.Execute("--version")
+```
+
+Notes:
+- Uninstall operates only on the writable root and won’t modify read-only roots;
+- If no read-only roots are set, behavior is unchanged from before;
+- Auto version selection checks all candidate roots to pick the highest installed version.
+
 ### Web UI
 
 Start the web-based management interface:

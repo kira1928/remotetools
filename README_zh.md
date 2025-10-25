@@ -96,6 +96,42 @@ tools.Get().StopWebUI()
 {
   "dotnet": {
     "8.0.5": {
+### 多目录工具查找（容器场景）
+
+从现在开始，工具查找支持“多个只读目录 + 一个读写目录”。典型用法：
+
+- 镜像内置若干只读目录，预装常用工具；
+- 程序启动后设置一个用户挂载卷作为可写目录，用于后续下载可选工具。
+
+查找顺序：会依次在只读目录列表中查找匹配工具，若未找到，最后在可写目录中查找；若仍未找到且需要安装，将下载并解压到可写目录中。
+
+示例代码：
+
+```go
+// 1) 配置只读目录（优先级按顺序）
+tools.SetReadOnlyToolFolders([]string{
+  "/opt/tools-ro",
+  "/usr/local/tools-ro",
+})
+
+// 2) 配置可写目录（用于下载/解压/卸载）
+tools.SetToolFolder("/data/tools")
+
+// 3) 加载配置并获取工具
+api := tools.Get()
+_ = api.LoadConfig("config.json")
+
+tool, _ := api.GetTool("mytool")
+if !tool.DoesToolExist() {
+  _ = tool.Install() // 只会安装到 /data/tools
+}
+_ = tool.Execute("--version")
+```
+
+注意：
+- 卸载只针对可写目录执行，不会修改只读目录；
+- 如果不设置只读目录，行为与之前完全一致；
+- 版本自动选择策略会在所有候选根目录中检测已安装版本（只读优先），以选出“最高已安装版本”。
       "downloadUrl": {
         "windows": {
           "amd64": "https://download.visualstudio.microsoft.com/..."

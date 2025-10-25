@@ -136,6 +136,7 @@ function createToolCard(tool) {
     // Folder and info
     const folderBtnEl = clone.querySelector('.folder-btn');
     const infoBtnEl = clone.querySelector('.info-btn');
+    const metaRowEl = clone.querySelector('.tool-meta-row');
     const folderPanelEl = clone.querySelector('.folder-panel');
     const infoPanelEl = clone.querySelector('.info-panel');
     folderBtnEl.textContent = t('folder');
@@ -208,7 +209,7 @@ function createToolCard(tool) {
         }
     });
     const statusClass = tool.installed ? 'status-installed' : 'status-not-installed';
-    const statusText = tool.installed ? t('installed') : t('notInstalled');
+    const statusText = tool.installed ? (tool.preinstalled ? t('preinstalled') : t('installed')) : t('notInstalled');
     statusEl.className = 'tool-status ' + statusClass;
     statusEl.textContent = statusText;
 
@@ -268,11 +269,22 @@ function createToolCard(tool) {
         }
     });
 
+    // 未安装：隐藏“目录/查看信息”二级按钮区
+    if (!tool.installed && metaRowEl) {
+        metaRowEl.style.display = 'none';
+    }
+
     if (tool.installed) {
         // Hide install button, show uninstall button
         installBtnEl.style.display = 'none';
         pauseBtnEl.style.display = 'none';
         resumeBtnEl.style.display = 'none';
+        if (tool.preinstalled) {
+            // 预装：显示一个禁用的“不可卸载”按钮，避免布局突兀
+            uninstallBtnEl.style.display = 'block';
+            uninstallBtnEl.disabled = true;
+            uninstallBtnEl.textContent = t('notUninstallable');
+        }
     } else {
         // Show install button, hide uninstall button
         uninstallBtnEl.style.display = 'none';
@@ -371,6 +383,11 @@ async function uninstallTool(toolName, version) {
         installBtn.disabled = false;
         pauseBtn.style.display = 'none';
         resumeBtn.style.display = 'none';
+        // 同步隐藏二级按钮区
+        {
+            const meta = card.querySelector('.tool-meta-row');
+            if (meta) meta.style.display = 'none';
+        }
     } catch (error) {
         errorMessage.textContent = t('error') + ': ' + error.message;
         errorMessage.style.display = 'block';
@@ -425,6 +442,11 @@ function updateProgress(progress) {
             statusDiv.textContent = t('installed');
             pauseBtn.style.display = 'none';
             resumeBtn.style.display = 'none';
+            // 安装完成：展示二级按钮区
+            {
+                const meta = card.querySelector('.tool-meta-row');
+                if (meta) meta.style.display = '';
+            }
             // 安装完成后，清除信息缓存，重置信息面板与按钮
             const infoBtnC = card.querySelector('.info-btn');
             const infoPanelC = card.querySelector('.info-panel');
@@ -471,6 +493,11 @@ function updateProgress(progress) {
             statusDiv.textContent = t('notInstalled');
             pauseBtn.style.display = 'none';
             resumeBtn.style.display = 'none';
+            // 卸载完成：隐藏二级按钮区
+            {
+                const meta = card.querySelector('.tool-meta-row');
+                if (meta) meta.style.display = 'none';
+            }
             // 卸载后同样清理信息缓存与面板
             {
                 const infoBtnC = card.querySelector('.info-btn');
@@ -534,7 +561,7 @@ window.onload = function () {
                     const progress = {
                         toolName: s.name,
                         version: s.version,
-                        status: s.paused ? 'paused' : (s.downloading ? 'downloading' : (s.installed ? 'completed' : '')),
+                        status: s.paused ? 'paused' : (s.downloading ? 'downloading' : ((s.installed && !s.preinstalled) ? 'completed' : '')),
                         downloadedBytes: s.downloadedBytes,
                         totalBytes: s.totalBytes,
                         speed: 0

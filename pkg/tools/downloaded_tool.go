@@ -121,7 +121,7 @@ func (p *DownloadedTool) emitProgress(dp DownloadProgress) {
 
 func (p *DownloadedTool) Install() error {
 	// 对同一工具目录加锁，防止并发安装/卸载/执行等冲突
-	tf := p.GetToolFolder()
+	tf := p.GetWritableToolFolder()
 	mu := getToolMutex(tf)
 	if !mu.TryLock() {
 		return ErrToolBusy
@@ -159,7 +159,7 @@ func (p *DownloadedTool) downloadTool() error {
 		return err
 	}
 
-	toolFolder := p.GetToolFolder()
+	toolFolder := p.GetWritableToolFolder()
 
 	// Create the directory if it does not exist
 	if _, err := os.Stat(toolFolder); os.IsNotExist(err) {
@@ -341,7 +341,7 @@ func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	toolFolder := p.GetToolFolder()
+	toolFolder := p.GetWritableToolFolder()
 	tmpPath := filepath.Join(toolFolder, downloadFileName)
 	var existingSize int64
 	if stat, err := os.Stat(tmpPath); err == nil {

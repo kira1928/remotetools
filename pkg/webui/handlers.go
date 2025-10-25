@@ -17,6 +17,8 @@ type ToolInfo struct {
 	Name      string `json:"name"`
 	Version   string `json:"version"`
 	Installed bool   `json:"installed"`
+	// Preinstalled 表示该工具是从只读目录识别到的预装版本
+	Preinstalled bool `json:"preinstalled"`
 }
 
 // InstallRequest represents an installation request
@@ -375,6 +377,7 @@ type ToolRuntimeStatus struct {
 	Name            string `json:"name"`
 	Version         string `json:"version"`
 	Installed       bool   `json:"installed"`
+	Preinstalled    bool   `json:"preinstalled"`
 	Downloading     bool   `json:"downloading"`
 	Paused          bool   `json:"paused"`
 	DownloadedBytes int64  `json:"downloadedBytes"`
@@ -415,6 +418,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 			Name:            t.Name,
 			Version:         t.Version,
 			Installed:       t.Installed,
+			Preinstalled:    t.Preinstalled,
 			Downloading:     downloading,
 			Paused:          paused,
 			DownloadedBytes: downloadedBytes,

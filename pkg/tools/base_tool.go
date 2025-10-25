@@ -21,23 +21,91 @@ func NewBaseTool(config *config.ToolConfig) *BaseTool {
 	}
 }
 
+// GetToolFolder 返回该工具实际所在的目录；若未找到则返回空字符串
 func (p *BaseTool) GetToolFolder() string {
-	return fmt.Sprintf("%s/%s/%s/%s/%s", GetToolFolder(), runtime.GOOS, runtime.GOARCH, p.ToolName, p.Version)
+	if _, folder, ok := p.resolveExistingPath(); ok {
+		return folder
+	}
+	return ""
 }
 
+// GetWritableToolFolder 返回用于安装/卸载的可写目录（不做存在性判断）
+func (p *BaseTool) GetWritableToolFolder() string {
+	return p.GetToolFolderPath(GetRootFolder())
+}
+
+func generateToolFolderPath(rootFolder, toolName, version string) string {
+	return fmt.Sprintf("%s/%s/%s/%s/%s", rootFolder, runtime.GOOS, runtime.GOARCH, toolName, version)
+}
+
+func (p *BaseTool) GetToolFolderPath(rootFolder string) string {
+	return generateToolFolderPath(rootFolder, p.ToolName, p.Version)
+}
+
+// resolveExistingPath 在候选根目录（先只读，后可写）中查找已存在的可执行路径
+// 返回：entryPath, folderPath, found
+func (p *BaseTool) resolveExistingPath() (string, string, bool) {
+	for _, root := range getCandidateRootFolders() {
+		folder := p.GetToolFolderPath(root)
+		entry := filepath.Join(folder, p.PathToEntry.Value)
+		if _, err := os.Stat(entry); err == nil {
+			return entry, folder, true
+		}
+	}
+	return "", "", false
+}
+
+// GetToolPath 若存在于任意候选目录，则返回实际存在的入口路径；否则返回可写目录中的预期路径
 func (p *BaseTool) GetToolPath() string {
-	return filepath.Join(p.GetToolFolder(), p.PathToEntry.Value)
+	if entry, _, ok := p.resolveExistingPath(); ok {
+		return entry
+	}
+	return ""
 }
 
+// DoesToolExist 在候选根目录中检查是否已存在
 func (p *BaseTool) DoesToolExist() bool {
-	_, err := os.Stat(p.GetToolPath())
-	return err == nil
+	_, _, ok := p.resolveExistingPath()
+	return ok
+}
+
+// GetResolvedEntryPath 若在候选目录中找到，返回实际存在的入口路径；否则返回空字符串
+// GetRootFolder 返回该工具被发现时所在的根目录（只读根或可写根）。若未发现返回空字符串
+func (p *BaseTool) GetRootFolder() string {
+	_, folder, ok := p.resolveExistingPath()
+	if !ok || folder == "" {
+		return ""
+	}
+	// 依次检查每个根是否与该 folder 匹配
+	for _, root := range getCandidateRootFolders() {
+		// 根据 root 构造期望路径
+		expected := p.GetToolFolderPath(root)
+		if filepath.Clean(expected) == filepath.Clean(folder) {
+			return root
+		}
+	}
+	return ""
+}
+
+// IsFromReadOnlyRootFolder 返回是否来自只读根目录
+func (p *BaseTool) IsFromReadOnlyRootFolder() bool {
+	root := p.GetRootFolder()
+	if root == "" {
+		return false
+	}
+	// 在只读根列表中匹配
+	for _, ro := range GetReadOnlyRootFolders() {
+		if filepath.Clean(ro) == filepath.Clean(root) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *BaseTool) Install() error {
 	// 在基础层也提供一个占位，具体实现通常由子类覆盖
 	// 这里加互斥以防与其他并发操作冲突
-	tf := p.GetToolFolder()
+	tf := p.GetWritableToolFolder()
 	mu := getToolMutex(tf)
 	if !mu.TryLock() {
 		return ErrToolBusy
@@ -110,6 +178,11 @@ func (p *BaseTool) Execute(args ...string) (err error) {
 
 func (p *BaseTool) GetVersion() string {
 	return p.Version
+}
+
+// GetToolName 返回工具名称
+func (p *BaseTool) GetToolName() string {
+	return p.ToolName
 }
 
 // ExecAndGetInfoString 运行配置中的 PrintInfoCmd（若存在）并返回其标准输出作为描述信息。

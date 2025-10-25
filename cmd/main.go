@@ -35,7 +35,7 @@ func main() {
 
 	// 设置工具文件夹
 	if *toolFolder != "" {
-		tools.SetToolFolder(*toolFolder)
+		tools.SetRootFolder(*toolFolder)
 	}
 
 	// 加载配置
