@@ -50,5 +50,23 @@
         "--info"
       ]
     }
+  },
+  "dummytool": {
+    "1.0.0": {
+      "downloadUrl": {
+        "dummyos": "https://example.com/dummytool/1.0.0/dummytool-dummyos.tar.gz",
+        "windows": {
+          "dummyarch": "https://example.com/dummytool/1.0.0/dummytool-windows-dummyarch.zip "
+        }
+      },
+      "pathToEntry": {
+        "darwin": "dummytool",
+        "linux": "dummytool",
+        "windows": "dummytool.exe"
+      },
+      "printInfoCmd": [
+        "--version"
+      ]
+    }
   }
 }

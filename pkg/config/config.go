@@ -69,7 +69,8 @@ func (p *OsArchSpecificString) UnmarshalJSON(data []byte) (err error) {
 	if err == nil {
 		value, ok := urlMap[runtime.GOOS]
 		if !ok || value == nil {
-			return fmt.Errorf("no value for %s in %v", runtime.GOOS, data)
+			fmt.Printf("no value for %s in %s\n", runtime.GOOS, string(data))
+			p.Value = ""
 		} else if url, ok := value.(string); ok {
 			/*
 				{
@@ -83,7 +84,8 @@ func (p *OsArchSpecificString) UnmarshalJSON(data []byte) (err error) {
 		} else if urlMapForArch, ok := value.(map[string]interface{}); ok {
 			value, ok := urlMapForArch[runtime.GOARCH]
 			if !ok || value == nil {
-				return fmt.Errorf("no value for %s/%s in %v", runtime.GOOS, runtime.GOARCH, data)
+				fmt.Printf("no value for %s/%s in %s\n", runtime.GOOS, runtime.GOARCH, string(data))
+				p.Value = ""
 			} else if url, ok := value.(string); ok {
 				/*
 					{
@@ -138,6 +140,10 @@ func LoadConfigFromBytes(data []byte) (conf Config, err error) {
 	for toolName, versions := range tempData {
 		// For each version, create a separate key with toolName@version
 		for version, versionData := range versions {
+			if versionData.DownloadURL.Value == "" {
+				fmt.Printf("no download URL for %s/%s in %s@%s\n", runtime.GOOS, runtime.GOARCH, toolName, version)
+				continue
+			}
 			key := toolName + "@" + version
 			conf.ToolConfigs[key] = &ToolConfig{
 				ToolName:     toolName,
