@@ -307,13 +307,18 @@ function createToolCard(tool) {
         resumeBtnEl.style.display = 'none';
     }
 
-    // 非可执行程序：隐藏“查看信息”按钮，显示提示文字
+    // 非可执行程序：隐藏“查看信息”按钮，插入一个样式一致但禁用的按钮
     if (tool && infoBtnEl && infoParent && tool.isExecutable === false) {
+        // 隐藏原 info 按钮，避免 toggleExclusive 等逻辑改写其文本
         infoBtnEl.style.display = 'none';
-        const label = document.createElement('span');
-        label.className = 'non-executable-label';
-        label.textContent = t('nonExecutable');
-        infoParent.appendChild(label);
+        // 新增一个禁用按钮，外观与二级按钮一致
+        const disabledBtn = document.createElement('button');
+        disabledBtn.className = 'secondary-btn non-executable-btn';
+        disabledBtn.textContent = t('nonExecutable');
+        disabledBtn.disabled = true;
+        disabledBtn.setAttribute('aria-disabled', 'true');
+        disabledBtn.title = t('nonExecutable');
+        infoParent.appendChild(disabledBtn);
     }
 
     return clone;

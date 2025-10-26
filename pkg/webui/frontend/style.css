@@ -288,3 +288,12 @@ h1 {
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+/* 二级按钮禁用态（用于非可执行程序的“信息”按钮占位）*/
+.secondary-btn:disabled {
+    background: #eeeeee;
+    color: #9ca3af;
+    /* gray-400 */
+    cursor: not-allowed;
+    opacity: 0.85;
+}
