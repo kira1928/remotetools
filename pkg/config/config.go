@@ -17,6 +17,10 @@ type ToolConfig struct {
 	DownloadURL  OsArchSpecificString `json:"downloadUrl"`
 	PathToEntry  OsArchSpecificString `json:"pathToEntry"`
 	PrintInfoCmd StringArray          `json:"printInfoCmd,omitempty"`
+	// IsExecutable 指示此条目是否为可直接执行的程序（例如 exe/elf）。
+	// 对于 any CPU 的 dll、纯资源包等不可直接执行的条目，应设为 false。
+	// 若未指定，默认视为 true。
+	IsExecutable bool `json:"isExecutable,omitempty"`
 }
 
 type OsArchSpecificString struct {
@@ -128,6 +132,8 @@ func LoadConfigFromBytes(data []byte) (conf Config, err error) {
 		DownloadURL  OsArchSpecificString `json:"downloadUrl"`
 		PathToEntry  OsArchSpecificString `json:"pathToEntry"`
 		PrintInfoCmd StringArray          `json:"printInfoCmd"`
+		// 使用指针以便区分“未提供”与“显式 false”
+		IsExecutable *bool `json:"isExecutable,omitempty"`
 	}
 
 	err = json.Unmarshal(data, &tempData)
@@ -145,12 +151,19 @@ func LoadConfigFromBytes(data []byte) (conf Config, err error) {
 				continue
 			}
 			key := toolName + "@" + version
+			// 默认 isExecutable = true；若配置显式为 false 则采用 false
+			isExec := true
+			if versionData.IsExecutable != nil {
+				isExec = *versionData.IsExecutable
+			}
+
 			conf.ToolConfigs[key] = &ToolConfig{
 				ToolName:     toolName,
 				Version:      version,
 				DownloadURL:  versionData.DownloadURL,
 				PathToEntry:  versionData.PathToEntry,
 				PrintInfoCmd: versionData.PrintInfoCmd,
+				IsExecutable: isExec,
 			}
 		}
 	}

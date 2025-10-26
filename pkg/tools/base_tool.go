@@ -57,10 +57,26 @@ func (p *BaseTool) resolveExistingPath() (string, string, bool) {
 
 // GetToolPath 若存在于任意候选目录，则返回实际存在的入口路径；否则返回可写目录中的预期路径
 func (p *BaseTool) GetToolPath() string {
-	if entry, _, ok := p.resolveExistingPath(); ok {
+	// 优先返回可执行的路径：当 rootFolder 不可执行时复制到 tmpExecFolder 运行
+	entry, folder, ok := p.resolveExistingPath()
+	if !ok {
+		return ""
+	}
+	// 若未设置 tmp 目录或当前目录可执行，直接返回原路径
+	if tmpExecRootFolder == "" || isExecSupportedCached(folder) {
 		return entry
 	}
-	return ""
+	// 需要复制到临时目录
+	execFolder := p.GetExecFolder()
+	if execFolder == "" {
+		return entry // 回退：若无法确定，仍返回原路径
+	}
+	// 确保已复制（若不存在则复制）
+	if st, err := os.Stat(execFolder); err != nil || !st.IsDir() {
+		_ = os.MkdirAll(execFolder, 0o755)
+		_ = copyDir(folder, execFolder)
+	}
+	return filepath.Join(execFolder, p.PathToEntry.Value)
 }
 
 // DoesToolExist 在候选根目录中检查是否已存在
@@ -146,6 +162,11 @@ func (p *BaseTool) Uninstall() error {
 		// Just return success since the tool is no longer accessible
 	}
 
+	// 同步清理临时执行目录（若存在）
+	if tmp := p.GetToolFolderPath(GetTmpRootFolderForExecPermission()); tmp != "" {
+		_ = os.RemoveAll(tmp)
+	}
+
 	return nil
 }
 
@@ -210,4 +231,21 @@ func (p *BaseTool) ExecAndGetInfoString() string {
 
 func (p *BaseTool) GetPrintInfoCmd() []string {
 	return p.PrintInfoCmd
+}
+
+// GetExecFolder 返回执行所用目录：当可写目录不可执行且配置了临时执行目录时，返回临时目录中的副本路径
+func (p *BaseTool) GetExecFolder() string {
+	// 先确认存储位置
+	_, folder, ok := p.resolveExistingPath()
+	if !ok || folder == "" {
+		return ""
+	}
+	if tmpExecRootFolder == "" || isExecSupportedCached(folder) {
+		return folder
+	}
+	// 计算临时执行目录
+	if tmpExecRootFolder == "" {
+		return folder
+	}
+	return p.GetToolFolderPath(tmpExecRootFolder)
 }

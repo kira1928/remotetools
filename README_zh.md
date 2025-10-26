@@ -149,6 +149,14 @@ _ = tool.Execute("--version")
 }
 ```
 
+### isExecutable 与执行权限处理（noexec 场景）
+
+- `isExecutable`（布尔，默认 `true`）：指示该条目是否为可直接执行的程序。对于 AnyCPU 的 dll、纯资源包等不可直接运行的条目，请设为 `false`。前端会隐藏“查看信息”按钮并显示“非可执行程序”提示。
+- 安装完成后，若 `isExecutable = true`，remotetools 会自动检测存储目录是否支持执行；若不支持且配置了临时执行目录（`SetTmpRootFolderForExecPermission`），会复制到临时目录并再次检测；若仍失败，则安装失败。
+- WebUI 会在标题右侧显示当前平台（如 `linux/amd64`），并在工具版本旁显示“临时目录运行”徽标以指示当前从临时目录执行。
+
+更多细节见 docs/IS_EXECUTABLE.md。
+
 ## 示例
 
 - [基本使用](examples/usage_scenarios/main.go) - 常见使用模式

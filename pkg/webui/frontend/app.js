@@ -130,17 +130,26 @@ function createToolCard(tool) {
     // Set tool version
     const toolVersionEl = clone.querySelector('.tool-version');
     toolVersionEl.textContent = t('version') + ': ' + tool.version;
+    // 若从临时目录执行，显示一个徽标
+    if (tool.execFromTemp) {
+        const badge = document.createElement('span');
+        badge.className = 'exec-badge';
+        badge.textContent = t('execFromTemp');
+        toolVersionEl.appendChild(document.createTextNode(' '));
+        toolVersionEl.appendChild(badge);
+    }
 
     // Set status
     const statusEl = clone.querySelector('.tool-status');
     // Folder and info
     const folderBtnEl = clone.querySelector('.folder-btn');
     const infoBtnEl = clone.querySelector('.info-btn');
+    const infoParent = infoBtnEl && infoBtnEl.parentElement;
     const metaRowEl = clone.querySelector('.tool-meta-row');
     const folderPanelEl = clone.querySelector('.folder-panel');
     const infoPanelEl = clone.querySelector('.info-panel');
     folderBtnEl.textContent = t('folder');
-    infoBtnEl.textContent = t('showInfo');
+    if (infoBtnEl) infoBtnEl.textContent = t('showInfo');
     // 信息缓存标记存放到 card dataset，便于全局事件重置
     card.dataset.infoLoaded = 'false';
 
@@ -175,8 +184,14 @@ function createToolCard(tool) {
                 const resp = await fetch(`api/tool-path?toolName=${encodeURIComponent(tool.name)}&version=${encodeURIComponent(tool.version)}`);
                 if (resp.ok) {
                     const data = await resp.json();
-                    if (data && typeof data.path === 'string') {
-                        folderPanelEl.textContent = data.path;
+                    if (data) {
+                        const storage = data.storagePath || '';
+                        const execPath = data.execPath || storage;
+                        if (execPath && storage && execPath !== storage) {
+                            folderPanelEl.textContent = `${t('folder')}:\nStorage: ${storage}\nExec: ${execPath}\n${t('execFromTemp')}`;
+                        } else {
+                            folderPanelEl.textContent = execPath || storage || '';
+                        }
                         folderLoaded = true;
                     }
                 }
@@ -185,7 +200,7 @@ function createToolCard(tool) {
     });
 
     // 绑定 info 按钮：首次点击拉取，后续切换只隐藏/展示
-    infoBtnEl.addEventListener('click', async function () {
+    if (infoBtnEl) infoBtnEl.addEventListener('click', async function () {
         const willOpen = infoPanelEl.style.display !== 'block';
         toggleExclusive(infoPanelEl, folderPanelEl, null);
         if (willOpen) {
@@ -290,6 +305,15 @@ function createToolCard(tool) {
         uninstallBtnEl.style.display = 'none';
         pauseBtnEl.style.display = 'none';
         resumeBtnEl.style.display = 'none';
+    }
+
+    // 非可执行程序：隐藏“查看信息”按钮，显示提示文字
+    if (tool && infoBtnEl && infoParent && tool.isExecutable === false) {
+        infoBtnEl.style.display = 'none';
+        const label = document.createElement('span');
+        label.className = 'non-executable-label';
+        label.textContent = t('nonExecutable');
+        infoParent.appendChild(label);
     }
 
     return clone;
@@ -543,6 +567,17 @@ async function pauseDownload(toolName, version) {
 // Initialize on page load
 window.onload = function () {
     loadTools();
+    // 显示平台信息
+    (async function () {
+        try {
+            const resp = await fetch('api/platform');
+            if (resp.ok) {
+                const data = await resp.json();
+                const el = document.getElementById('platform-info');
+                if (el && data && data.platform) el.textContent = '(' + data.platform + ')';
+            }
+        } catch (e) { /* ignore */ }
+    })();
     // 访问首页时先询问后端是否需要建立 SSE
     (async function () {
         try {

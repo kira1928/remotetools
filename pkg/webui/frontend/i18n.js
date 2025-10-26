@@ -52,7 +52,9 @@ const i18n = {
         failedToLoad: '加载工具失败',
         folder: '目录',
         showInfo: '查看信息',
-        hideInfo: '隐藏信息'
+        hideInfo: '隐藏信息',
+        nonExecutable: '非可执行程序',
+        execFromTemp: '临时目录运行'
     }
 };
 

@@ -24,6 +24,7 @@ func (a *webuiAdapter) ListTools() ([]webui.ToolInfo, error) {
 			Version:      toolConfig.Version,
 			Installed:    false,
 			Preinstalled: false,
+			IsExecutable: toolConfig.IsExecutable,
 		}
 
 		// Check if tool is installed
@@ -32,6 +33,10 @@ func (a *webuiAdapter) ListTools() ([]webui.ToolInfo, error) {
 			if tool.DoesToolExist() {
 				toolInfo.Installed = true
 				toolInfo.Preinstalled = tool.IsFromReadOnlyRootFolder()
+				// 采集目录信息
+				toolInfo.StorageFolder = tool.GetToolFolder()
+				toolInfo.ExecFolder = tool.GetExecFolder()
+				toolInfo.ExecFromTemp = (toolInfo.ExecFolder != "" && toolInfo.StorageFolder != "" && filepath.Clean(toolInfo.ExecFolder) != filepath.Clean(toolInfo.StorageFolder))
 			}
 		}
 
@@ -121,13 +126,18 @@ func (a *webuiAdapter) PauseTool(toolName, version string) error {
 	return nil
 }
 
-// GetToolFolder returns the install folder for a tool version
-func (a *webuiAdapter) GetToolFolder(toolName, version string) (string, error) {
+// GetToolFolders returns storage and exec folders
+func (a *webuiAdapter) GetToolFolders(toolName, version string) (string, string, error) {
 	tool, err := a.api.GetToolWithVersion(toolName, version)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return filepath.Dir(tool.GetToolPath()), nil
+	storage := tool.GetToolFolder()
+	execFolder := tool.GetExecFolder()
+	if execFolder == "" {
+		execFolder = filepath.Dir(tool.GetToolPath())
+	}
+	return storage, execFolder, nil
 }
 
 // GetToolInfoString executes printInfoCmd and returns stdout

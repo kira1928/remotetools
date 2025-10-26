@@ -130,7 +130,62 @@ func (p *DownloadedTool) Install() error {
 	// 标记活动任务
 	markActive(p.ToolName, p.Version)
 	defer unmarkActive(p.ToolName, p.Version)
-	return p.downloadTool()
+
+	if err := p.downloadTool(); err != nil {
+		return err
+	}
+	// 后置检查：对于可执行程序，安装完成后立即检测执行支持；必要时复制到临时执行目录
+	// 注意：此处不发送 completed，由本方法在检查通过后统一发送
+	// 仅在工具被标记为可执行时进行
+	if p.BaseTool != nil && p.BaseTool.ToolConfig != nil && p.BaseTool.ToolConfig.IsExecutable {
+		// 先检查存储目录
+		storage := p.GetToolFolder()
+		if storage == "" {
+			e := errors.New("install succeeded but tool folder not found")
+			p.emitProgress(DownloadProgress{Status: "failed", Error: e})
+			return e
+		}
+		if !isExecSupportedCached(storage) {
+			// 复制到临时执行目录
+			execRoot := GetTmpRootFolderForExecPermission()
+			if execRoot != "" {
+				execFolder := p.GetToolFolderPath(execRoot)
+				// 复制之前，先检测目标目录（临时执行根/execFolder）是否具备执行权限，避免长时间复制后失败
+				if !isExecSupportedCached(execFolder) {
+					e := fmt.Errorf("tmp exec folder not executable: %s", execFolder)
+					p.emitProgress(DownloadProgress{Status: "failed", Error: e})
+					return e
+				}
+				if mkErr := os.MkdirAll(execFolder, 0o755); mkErr == nil {
+					// 复制并二次检测
+					cpErr := copyDir(storage, execFolder)
+					if cpErr != nil {
+						// 复制失败时清理并报错
+						_ = os.RemoveAll(execFolder)
+						p.emitProgress(DownloadProgress{Status: "failed", Error: cpErr})
+						return cpErr
+					}
+					if !isExecSupported(execFolder) {
+						// 二次检测失败：清理临时目录
+						_ = os.RemoveAll(execFolder)
+						e := fmt.Errorf("execution not supported for %s@%s even in tmp exec folder", p.ToolName, p.Version)
+						p.emitProgress(DownloadProgress{Status: "failed", Error: e})
+						return e
+					}
+				} else {
+					p.emitProgress(DownloadProgress{Status: "failed", Error: mkErr})
+					return mkErr
+				}
+			} else {
+				e := errors.New("no tmp exec folder configured for non-executable storage")
+				p.emitProgress(DownloadProgress{Status: "failed", Error: e})
+				return e
+			}
+		}
+	}
+	// 一切正常，发送 completed
+	p.emitProgress(DownloadProgress{Status: "completed"})
+	return nil
 }
 
 func (p *DownloadedTool) GetInstallSource() string {
@@ -162,19 +217,19 @@ func (p *DownloadedTool) downloadTool() error {
 	toolFolder := p.GetWritableToolFolder()
 
 	// Create the directory if it does not exist
-	if _, err := os.Stat(toolFolder); os.IsNotExist(err) {
-		err = os.MkdirAll(toolFolder, 0755)
-		if err != nil {
-			p.emitProgress(DownloadProgress{Status: "failed", Error: err})
-			return err
+	if _, statErr := os.Stat(toolFolder); os.IsNotExist(statErr) {
+		mkErr := os.MkdirAll(toolFolder, 0755)
+		if mkErr != nil {
+			p.emitProgress(DownloadProgress{Status: "failed", Error: mkErr})
+			return mkErr
 		}
 	}
 
 	// Clean up any leftover temporary extraction folders
 	tmpExtractFolder := filepath.Join(filepath.Dir(toolFolder), ".tmp_"+filepath.Base(toolFolder))
-	if _, err := os.Stat(tmpExtractFolder); err == nil {
-		if err := os.RemoveAll(tmpExtractFolder); err != nil {
-			return fmt.Errorf("failed to remove temporary extraction folder: %w", err)
+	if _, dirErr := os.Stat(tmpExtractFolder); dirErr == nil {
+		if rmErr := os.RemoveAll(tmpExtractFolder); rmErr != nil {
+			return fmt.Errorf("failed to remove temporary extraction folder: %w", rmErr)
 		}
 	}
 
@@ -182,7 +237,7 @@ func (p *DownloadedTool) downloadTool() error {
 
 	// Check if partial download exists to support resumable download
 	var existingSize int64
-	if stat, err := os.Stat(tmpPath); err == nil {
+	if stat, statErr := os.Stat(tmpPath); statErr == nil {
 		existingSize = stat.Size()
 	}
 
@@ -237,9 +292,9 @@ func (p *DownloadedTool) downloadTool() error {
 
 	// check if the response status code is 200 (full content) or 206 (partial content)
 	if !skipDownload && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		err := fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
-		p.emitProgress(DownloadProgress{Status: "failed", Error: err})
-		return err
+		ferr := fmt.Errorf("failed to download tool %s: %s, url: %s", p.ToolName, resp.Status, url)
+		p.emitProgress(DownloadProgress{Status: "failed", Error: ferr})
+		return ferr
 	}
 
 	if !skipDownload {
@@ -328,8 +383,6 @@ func (p *DownloadedTool) downloadTool() error {
 			return err
 		}
 	}
-
-	p.emitProgress(DownloadProgress{Status: "completed"})
 
 	return nil
 }
@@ -486,18 +539,18 @@ func extractZipFile(zipPath string, dest string) error {
 
 		fpath := filepath.Join(dest, f.Name)
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(fpath, os.ModePerm); err != nil {
-				return err
+			if mkErr := os.MkdirAll(fpath, os.ModePerm); mkErr != nil {
+				return mkErr
 			}
 		} else {
 			var dir string
 			if lastIndex := strings.LastIndex(fpath, string(os.PathSeparator)); lastIndex > -1 {
 				dir = fpath[:lastIndex]
 			}
-			err = os.MkdirAll(dir, os.ModePerm)
-			if err != nil {
-				log.Fatal(err)
-				return err
+			mkErr := os.MkdirAll(dir, os.ModePerm)
+			if mkErr != nil {
+				log.Fatal(mkErr)
+				return mkErr
 			}
 			f, err := os.OpenFile(
 				fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
@@ -559,9 +612,9 @@ func extractTarGzFile(path string, dest string) error {
 		// Check if the file is a directory
 		if header.FileInfo().IsDir() {
 			// Create the directory if it doesn't exist
-			err := os.MkdirAll(targetPath, header.FileInfo().Mode())
-			if err != nil {
-				return err
+			mkErr := os.MkdirAll(targetPath, header.FileInfo().Mode())
+			if mkErr != nil {
+				return mkErr
 			}
 			continue
 		}
@@ -615,15 +668,15 @@ func extractTarXzFile(path string, dest string) error {
 
 		targetPath := filepath.Join(dest, hdr.Name)
 		if hdr.FileInfo().IsDir() {
-			if err := os.MkdirAll(targetPath, hdr.FileInfo().Mode()); err != nil {
-				return err
+			if mkErr := os.MkdirAll(targetPath, hdr.FileInfo().Mode()); mkErr != nil {
+				return mkErr
 			}
 			continue
 		}
 
 		// Ensure parent dir exists
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-			return err
+		if mkErr := os.MkdirAll(filepath.Dir(targetPath), 0755); mkErr != nil {
+			return mkErr
 		}
 
 		out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, hdr.FileInfo().Mode())

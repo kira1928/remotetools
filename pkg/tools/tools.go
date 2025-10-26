@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/kira1928/remotetools/pkg/config"
 	"github.com/kira1928/remotetools/pkg/webui"
@@ -25,6 +27,8 @@ type Tool interface {
 	GetToolFolder() string
 	// GetToolPath 返回实际可执行入口路径；若不存在则返回空字符串
 	GetToolPath() string
+	// GetExecFolder 返回执行使用的目录；当可写目录不可执行时，可能为临时目录
+	GetExecFolder() string
 	GetInstallSource() string
 	ExecAndGetInfoString() string
 	GetPrintInfoCmd() []string
@@ -40,6 +44,9 @@ var rootFolder string = "external_tools"
 // 只读根目录列表（优先查找）。例如容器内预置目录。
 var roRootFolders []string
 
+// 可执行权限的临时目录：当 rootFolder 所在挂载点不支持 exec 时，工具会复制到此处运行
+var tmpExecRootFolder string
+
 // SetRootFolder 设置可写入的根目录
 func SetRootFolder(folder string) {
 	rootFolder = folder
@@ -48,6 +55,108 @@ func SetRootFolder(folder string) {
 // GetRootFolder 返回可写入的根目录
 func GetRootFolder() string {
 	return rootFolder
+}
+
+// SetTmpRootFolderForExecPermission 设置在可写目录不可执行时用于运行的临时目录
+func SetTmpRootFolderForExecPermission(folder string) {
+	tmpExecRootFolder = folder
+}
+
+// GetTmpRootFolderForExecPermission 返回当前配置的临时执行目录
+func GetTmpRootFolderForExecPermission() string {
+	return tmpExecRootFolder
+}
+
+// isExecSupported 在 Linux 上尝试在目标目录直接创建并执行脚本，判断是否被 noexec/权限限制。
+// 其他平台上默认返回 true。
+type execSupportEntry struct {
+	ok        bool
+	checkedAt time.Time
+}
+
+var execSupportCache sync.Map // key: cleaned dir path, value: execSupportEntry
+const execSupportTTL = 10 * time.Minute
+
+// isExecSupported returns whether execution is supported in the directory.
+// On Linux, it writes and executes a tiny script; on other platforms, returns true.
+func isExecSupported(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false
+	}
+	testFile := filepath.Join(dir, ".rt_exec_test.sh")
+	content := []byte("#!/bin/sh\necho ok\n")
+	if err := os.WriteFile(testFile, content, 0o755); err != nil {
+		return false
+	}
+	defer os.Remove(testFile)
+	cmd := exec.Command(testFile)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "ok")
+}
+
+// isExecSupportedCached caches the result to avoid repeated expensive checks for the same folder.
+func isExecSupportedCached(dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	key := filepath.Clean(dir)
+	if v, ok := execSupportCache.Load(key); ok {
+		if ent, ok2 := v.(execSupportEntry); ok2 {
+			if time.Since(ent.checkedAt) < execSupportTTL {
+				return ent.ok
+			}
+		}
+	}
+	ok := isExecSupported(key)
+	execSupportCache.Store(key, execSupportEntry{ok: ok, checkedAt: time.Now()})
+	return ok
+}
+
+// copyDir 递归复制目录内容（覆盖已存在文件）
+func copyDir(src, dst string) error {
+	// ensure dst exists
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		info, err := os.Lstat(s)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			// skip symlinks for safety
+			continue
+		}
+		if info.IsDir() {
+			if err := copyDir(s, d); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := os.ReadFile(s)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(d, data, info.Mode()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SetReadOnlyRootFolders 设置只读根目录列表（查找顺序按给定顺序）。
@@ -90,6 +199,8 @@ type API struct {
 	config        config.Config
 	toolInstances map[string]Tool
 	webUIServer   *webui.WebUIServer
+	// 保护 toolInstances 的并发读写
+	toolMu sync.RWMutex
 }
 
 func (p *API) LoadConfig(path string) (err error) {
@@ -122,7 +233,10 @@ const (
 func (p *API) GetToolAuto(toolName string, strategy AutoVersionStrategy) (tool Tool, err error) {
 	// First check if there's a direct match (single version case)
 	ok := false
-	if tool, ok = p.toolInstances[toolName]; ok && tool != nil {
+	p.toolMu.RLock()
+	tool, ok = p.toolInstances[toolName]
+	p.toolMu.RUnlock()
+	if ok && tool != nil {
 		return tool, nil
 	}
 
@@ -132,11 +246,23 @@ func (p *API) GetToolAuto(toolName string, strategy AutoVersionStrategy) (tool T
 
 	// Check for direct key match (single version)
 	if toolConfig, ok := p.config.ToolConfigs[toolName]; ok {
-		if cachedTool, ok := p.toolInstances[toolName]; ok && cachedTool != nil {
+		// 双重检查，避免重复创建
+		p.toolMu.RLock()
+		if cachedTool, exists := p.toolInstances[toolName]; exists && cachedTool != nil {
+			p.toolMu.RUnlock()
 			return cachedTool, nil
 		}
+		p.toolMu.RUnlock()
+
 		tool = NewDownloadTool(toolConfig)
+		p.toolMu.Lock()
+		// 二次判断，防止并发创建
+		if cachedTool, exists := p.toolInstances[toolName]; exists && cachedTool != nil {
+			p.toolMu.Unlock()
+			return cachedTool, nil
+		}
 		p.toolInstances[toolName] = tool
+		p.toolMu.Unlock()
 		return tool, nil
 	}
 
@@ -224,7 +350,10 @@ func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error
 	key := toolName + "@" + version
 
 	var ok bool
-	if tool, ok = p.toolInstances[key]; ok && tool != nil {
+	p.toolMu.RLock()
+	tool, ok = p.toolInstances[key]
+	p.toolMu.RUnlock()
+	if ok && tool != nil {
 		return
 	}
 
@@ -234,8 +363,25 @@ func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error
 	}
 
 	if toolConfig, ok := p.config.ToolConfigs[key]; ok {
-		tool = NewDownloadTool(toolConfig)
-		p.toolInstances[key] = tool
+		// 双重检查：创建前后都判断缓存
+		p.toolMu.RLock()
+		if cached, exists := p.toolInstances[key]; exists && cached != nil {
+			p.toolMu.RUnlock()
+			tool = cached
+			return
+		}
+		p.toolMu.RUnlock()
+
+		t := NewDownloadTool(toolConfig)
+		p.toolMu.Lock()
+		if cached, exists := p.toolInstances[key]; exists && cached != nil {
+			tool = cached
+			p.toolMu.Unlock()
+			return
+		}
+		p.toolInstances[key] = t
+		p.toolMu.Unlock()
+		tool = t
 	}
 	return
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"runtime"
 	"sync"
 )
 
@@ -19,6 +20,12 @@ type ToolInfo struct {
 	Installed bool   `json:"installed"`
 	// Preinstalled 表示该工具是从只读目录识别到的预装版本
 	Preinstalled bool `json:"preinstalled"`
+	// 额外信息：存储目录、执行目录及是否从临时目录执行
+	StorageFolder string `json:"storageFolder,omitempty"`
+	ExecFolder    string `json:"execFolder,omitempty"`
+	ExecFromTemp  bool   `json:"execFromTemp,omitempty"`
+	// 是否为可执行程序（由配置项 isExecutable 指示）
+	IsExecutable bool `json:"isExecutable"`
 }
 
 // InstallRequest represents an installation request
@@ -47,8 +54,8 @@ type APIAdapter interface {
 	GetDownloadInfo(toolName, version string) (int64, int64, error)
 	// PauseTool requests pausing current download if in progress
 	PauseTool(toolName, version string) error
-	// GetToolFolder returns the install folder of a tool version
-	GetToolFolder(toolName, version string) (string, error)
+	// GetToolFolders returns storage(exec source) and exec folders
+	GetToolFolders(toolName, version string) (storage string, exec string, err error)
 	// GetToolInfoString executes configured printInfoCmd and returns stdout
 	GetToolInfoString(toolName, version string) (string, error)
 	// ListActiveInstalls returns active install keys in the form tool@version
@@ -93,6 +100,7 @@ func (s *WebUIServer) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/tool-path", handleToolPath)
 	mux.HandleFunc("/api/tool-info", handleToolInfo)
+	mux.HandleFunc("/api/platform", handlePlatform)
 }
 
 // handleIndex serves the main HTML page
@@ -449,13 +457,13 @@ func handleToolPath(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "toolName and version are required", http.StatusBadRequest)
 		return
 	}
-	path, err := apiAdapter.GetToolFolder(toolName, version)
+	storage, execPath, err := apiAdapter.GetToolFolders(toolName, version)
 	if err != nil {
 		http.Error(w, "Failed to get path: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"path": path})
+	_ = json.NewEncoder(w).Encode(map[string]string{"storagePath": storage, "execPath": execPath})
 }
 
 // handleToolInfo executes printInfoCmd and returns stdout
@@ -482,4 +490,14 @@ func handleToolInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"info": info})
+}
+
+// handlePlatform returns current runtime platform (os/arch)
+func handlePlatform(w http.ResponseWriter, r *http.Request) {
+	type plat struct {
+		Platform string `json:"platform"`
+	}
+	p := plat{Platform: runtime.GOOS + "/" + runtime.GOARCH}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(p)
 }
