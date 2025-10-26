@@ -458,95 +458,145 @@ func (p *API) GetWebUIAddresses() (addresses []string, err error) {
 	return p.webUIServer.GetAddresses()
 }
 
-// DeleteUnknownToolsInRoot 扫描可写根目录下当前 OS/ARCH 的工具目录，
-// 删除所有不在当前配置(p.config)中的 工具@版本 目录。
+// DeleteUnknownToolsInRoot 清理可写根目录下的工具：
+// - 对于非当前 OS 或 ARCH 的目录，直接整目录删除（不深入遍历）。
+// - 对于当前 OS/ARCH，删除所有不在当前配置(p.config)中的 工具@版本 目录。
 // 仅作用于可写根目录（GetRootFolder），不会触及只读根目录。
-// 返回被删除的版本目录的完整路径列表。
+// 返回被删除的目录完整路径列表（可能是版本目录、架构目录或系统目录）。
 func (p *API) DeleteUnknownToolsInRoot() (deleted []string, err error) {
 	// 配置必须已加载
 	if p.config.ToolConfigs == nil {
 		return nil, fmt.Errorf("config is not loaded")
 	}
 
-	// 构建允许集合（仅针对当前 OS/ARCH 已有可用下载地址的配置）
+	// 构建允许集合（key 形如 tool@version）
 	allowed := make(map[string]struct{}, len(p.config.ToolConfigs))
 	for key := range p.config.ToolConfigs {
-		// 形如 tool@version
 		allowed[key] = struct{}{}
 	}
 
 	root := GetRootFolder()
-	base := filepath.Join(root, runtime.GOOS, runtime.GOARCH)
 
-	// 根不存在则无事可做
-	if stat, statErr := os.Stat(base); statErr != nil || !stat.IsDir() {
-		return nil, nil
-	}
-
-	// 遍历工具 -> 版本
-	toolDirs, readErr := os.ReadDir(base)
-	if readErr != nil {
-		return nil, readErr
+	// 遍历所有 OS/ARCH 目录层级：root/os/arch/tool/version
+	osDirs, err := os.ReadDir(root)
+	if err != nil {
+		// 根不存在或不可读则视为无事可做
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	var firstErr error
-	for _, td := range toolDirs {
-		if !td.IsDir() {
+
+	for _, osd := range osDirs {
+		if !osd.IsDir() {
 			continue
 		}
-		toolName := td.Name()
-		toolPath := filepath.Join(base, toolName)
+		osPath := filepath.Join(root, osd.Name())
+		// 非当前 OS：整目录删除
+		if osd.Name() != runtime.GOOS {
+			if remErr := os.RemoveAll(osPath); remErr != nil {
+				if firstErr == nil {
+					firstErr = remErr
+				}
+			} else {
+				deleted = append(deleted, osPath)
+			}
+			continue
+		}
 
-		versionDirs, _ := os.ReadDir(toolPath)
-		for _, vd := range versionDirs {
-			if !vd.IsDir() {
+		archDirs, _ := os.ReadDir(osPath)
+		for _, ad := range archDirs {
+			if !ad.IsDir() {
 				continue
 			}
-			version := vd.Name()
-			// 跳过临时/垃圾目录
-			if strings.HasPrefix(version, ".tmp_") || strings.HasPrefix(version, ".trash-") {
-				continue
-			}
-
-			key := toolName + "@" + version
-			if _, ok := allowed[key]; ok {
-				// 在配置中，保留
-				continue
-			}
-
-			// 不在配置中：尝试加锁并删除
-			versionPath := filepath.Join(toolPath, version)
-			mu := getToolMutex(versionPath)
-			if !mu.TryLock() {
-				// 忙碌则跳过，不视为致命错误
-				continue
-			}
-			func() {
-				defer mu.Unlock()
-				if remErr := os.RemoveAll(versionPath); remErr != nil {
+			archPath := filepath.Join(osPath, ad.Name())
+			// 非当前 ARCH：整目录删除
+			if ad.Name() != runtime.GOARCH {
+				if remErr := os.RemoveAll(archPath); remErr != nil {
 					if firstErr == nil {
 						firstErr = remErr
 					}
 				} else {
-					deleted = append(deleted, versionPath)
+					deleted = append(deleted, archPath)
 				}
-			}()
+				continue
+			}
+
+			// 遍历工具 -> 版本
+			toolDirs, _ := os.ReadDir(archPath)
+			for _, td := range toolDirs {
+				if !td.IsDir() {
+					continue
+				}
+				toolName := td.Name()
+				toolPath := filepath.Join(archPath, toolName)
+
+				versionDirs, _ := os.ReadDir(toolPath)
+				for _, vd := range versionDirs {
+					if !vd.IsDir() {
+						continue
+					}
+					version := vd.Name()
+					// 跳过临时/垃圾目录
+					if strings.HasPrefix(version, ".tmp_") || strings.HasPrefix(version, ".trash-") {
+						continue
+					}
+
+					key := toolName + "@" + version
+					if _, ok := allowed[key]; ok {
+						// 在配置中，保留
+						continue
+					}
+
+					// 不在配置中：尝试加锁并删除
+					versionPath := filepath.Join(toolPath, version)
+					mu := getToolMutex(versionPath)
+					if !mu.TryLock() {
+						// 忙碌则跳过，不视为致命错误
+						continue
+					}
+					func() {
+						defer mu.Unlock()
+						if remErr := os.RemoveAll(versionPath); remErr != nil {
+							if firstErr == nil {
+								firstErr = remErr
+							}
+						} else {
+							deleted = append(deleted, versionPath)
+						}
+					}()
+				}
+
+				// 版本目录处理后，如工具目录已空则尝试清理该工具目录
+				if entries, _ := os.ReadDir(toolPath); len(entries) == 0 {
+					_ = os.Remove(toolPath)
+				}
+			}
+
+			// 工具目录处理后，如架构目录已空则尝试清理该架构目录
+			if entries, _ := os.ReadDir(archPath); len(entries) == 0 {
+				_ = os.Remove(archPath)
+			}
 		}
 
-		// 版本目录处理后，如工具目录已空则尝试清理该工具目录
-		if entries, _ := os.ReadDir(toolPath); len(entries) == 0 {
-			_ = os.Remove(toolPath)
+		// 架构目录处理后，如操作系统目录已空则尝试清理该目录
+		if entries, _ := os.ReadDir(osPath); len(entries) == 0 {
+			_ = os.Remove(osPath)
 		}
 	}
 
 	return deleted, firstErr
 }
 
-// DeleteAllExceptToolsInRoot 删除可写根目录中，除 toKeep 中列出的 工具@版本 以外的所有其他目录。
+// DeleteAllExceptToolsInRoot 删除可写根目录中：
+// - 对于非当前 OS 或 ARCH 的目录，直接整目录删除（不深入遍历）。
+// - 对于当前 OS/ARCH，仅保留 toKeep 中列出的 工具@版本，其余删除。
 // 仅作用于可写根目录（GetRootFolder），不会触及只读根目录。
-// 返回被删除的版本目录的完整路径列表。
+// 返回被删除的目录完整路径列表（可能是版本目录、架构目录或系统目录）。
 func (p *API) DeleteAllExceptToolsInRoot(toKeep []Tool) (deleted []string, err error) {
-	// 允许集合：来自调用方指定的工具列表
+	// 允许集合：来自调用方指定的工具列表（key 形如 tool@version）
 	allowed := make(map[string]struct{}, len(toKeep))
 	for _, t := range toKeep {
 		if t == nil {
@@ -561,61 +611,108 @@ func (p *API) DeleteAllExceptToolsInRoot(toKeep []Tool) (deleted []string, err e
 	}
 
 	root := GetRootFolder()
-	base := filepath.Join(root, runtime.GOOS, runtime.GOARCH)
 
-	if stat, statErr := os.Stat(base); statErr != nil || !stat.IsDir() {
-		return nil, nil
-	}
-
-	toolDirs, readErr := os.ReadDir(base)
-	if readErr != nil {
-		return nil, readErr
+	osDirs, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	var firstErr error
-	for _, td := range toolDirs {
-		if !td.IsDir() {
+
+	for _, osd := range osDirs {
+		if !osd.IsDir() {
 			continue
 		}
-		toolName := td.Name()
-		toolPath := filepath.Join(base, toolName)
+		osPath := filepath.Join(root, osd.Name())
+		// 非当前 OS：整目录删除
+		if osd.Name() != runtime.GOOS {
+			if remErr := os.RemoveAll(osPath); remErr != nil {
+				if firstErr == nil {
+					firstErr = remErr
+				}
+			} else {
+				deleted = append(deleted, osPath)
+			}
+			continue
+		}
 
-		versionDirs, _ := os.ReadDir(toolPath)
-		for _, vd := range versionDirs {
-			if !vd.IsDir() {
+		archDirs, _ := os.ReadDir(osPath)
+		for _, ad := range archDirs {
+			if !ad.IsDir() {
 				continue
 			}
-			version := vd.Name()
-			if strings.HasPrefix(version, ".tmp_") || strings.HasPrefix(version, ".trash-") {
-				continue
-			}
-			key := toolName + "@" + version
-			if _, ok := allowed[key]; ok {
-				// 保留
-				continue
-			}
-
-			versionPath := filepath.Join(toolPath, version)
-			mu := getToolMutex(versionPath)
-			if !mu.TryLock() {
-				// 忙碌则跳过
-				continue
-			}
-			func() {
-				defer mu.Unlock()
-				if remErr := os.RemoveAll(versionPath); remErr != nil {
+			archPath := filepath.Join(osPath, ad.Name())
+			// 非当前 ARCH：整目录删除
+			if ad.Name() != runtime.GOARCH {
+				if remErr := os.RemoveAll(archPath); remErr != nil {
 					if firstErr == nil {
 						firstErr = remErr
 					}
 				} else {
-					deleted = append(deleted, versionPath)
+					deleted = append(deleted, archPath)
 				}
-			}()
+				continue
+			}
+
+			toolDirs, _ := os.ReadDir(archPath)
+			for _, td := range toolDirs {
+				if !td.IsDir() {
+					continue
+				}
+				toolName := td.Name()
+				toolPath := filepath.Join(archPath, toolName)
+
+				versionDirs, _ := os.ReadDir(toolPath)
+				for _, vd := range versionDirs {
+					if !vd.IsDir() {
+						continue
+					}
+					version := vd.Name()
+					if strings.HasPrefix(version, ".tmp_") || strings.HasPrefix(version, ".trash-") {
+						continue
+					}
+					key := toolName + "@" + version
+					if _, ok := allowed[key]; ok {
+						// 保留
+						continue
+					}
+
+					versionPath := filepath.Join(toolPath, version)
+					mu := getToolMutex(versionPath)
+					if !mu.TryLock() {
+						// 忙碌则跳过
+						continue
+					}
+					func() {
+						defer mu.Unlock()
+						if remErr := os.RemoveAll(versionPath); remErr != nil {
+							if firstErr == nil {
+								firstErr = remErr
+							}
+						} else {
+							deleted = append(deleted, versionPath)
+						}
+					}()
+				}
+
+				// 若已空则移除工具目录
+				if entries, _ := os.ReadDir(toolPath); len(entries) == 0 {
+					_ = os.Remove(toolPath)
+				}
+			}
+
+			// 若已空则移除 arch 目录
+			if entries, _ := os.ReadDir(archPath); len(entries) == 0 {
+				_ = os.Remove(archPath)
+			}
 		}
 
-		// 若已空则移除工具目录
-		if entries, _ := os.ReadDir(toolPath); len(entries) == 0 {
-			_ = os.Remove(toolPath)
+		// 若已空则移除 os 目录
+		if entries, _ := os.ReadDir(osPath); len(entries) == 0 {
+			_ = os.Remove(osPath)
 		}
 	}
 
