@@ -221,8 +221,8 @@ func (p *BaseTool) ExecAndGetInfoString() string {
 	if err != nil {
 		return ""
 	}
-	// 捕获标准输出
-	out, err := cmd.Output()
+	// 捕获标准输出和错误输出
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
 	}
