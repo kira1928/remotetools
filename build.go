@@ -186,12 +186,12 @@ func buildCurrent(opts options, mode string) error {
 	outPath := filepath.Join(opts.buildDir, outName)
 
 	args := []string{"build"}
-	// ldflags：避免引用不存在的 -X 变量导致链接失败，仅在 release 时做瘦身
 	switch mode {
 	case "dev":
 		// 关闭内联与优化方便调试
 		args = append(args, "-gcflags", "all=-N -l")
 	case "release":
+		// 瘦身
 		args = append(args, "-ldflags", "-s -w")
 	}
 
@@ -218,6 +218,7 @@ func buildCurrent(opts options, mode string) error {
 
 func buildAll(opts options) error {
 	fmt.Println("开始构建所有平台 ...")
+
 	for _, p := range allPlatforms {
 		parts := strings.SplitN(p, "/", 2)
 		if len(parts) != 2 {
