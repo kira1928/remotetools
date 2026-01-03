@@ -47,7 +47,7 @@ func (p *BaseTool) GetToolFolderPath(rootFolder string) string {
 func (p *BaseTool) resolveExistingPath() (string, string, bool) {
 	for _, root := range getCandidateRootFolders() {
 		folder := p.GetToolFolderPath(root)
-		entry := filepath.Join(folder, p.PathToEntry.Value)
+		entry := filepath.Join(folder, p.PathToEntry.Primary())
 		if _, err := os.Stat(entry); err == nil {
 			return entry, folder, true
 		}
@@ -76,7 +76,7 @@ func (p *BaseTool) GetToolPath() string {
 		_ = os.MkdirAll(execFolder, 0o755)
 		_ = copyDir(folder, execFolder)
 	}
-	return filepath.Join(execFolder, p.PathToEntry.Value)
+	return filepath.Join(execFolder, p.PathToEntry.Primary())
 }
 
 // DoesToolExist 在候选根目录中检查是否已存在

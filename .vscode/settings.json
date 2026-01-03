@@ -1,7 +1,8 @@
 {
   "editor.formatOnSave": true,
   "[go]": {
-      "editor.defaultFormatter": "golang.go",
-      "editor.formatOnSave": true
+    "editor.defaultFormatter": "golang.go",
+    "editor.formatOnSave": true
   },
+  "chat.agent.maxRequests": 100,
 }

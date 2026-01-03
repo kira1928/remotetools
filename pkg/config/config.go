@@ -23,8 +23,18 @@ type ToolConfig struct {
 	IsExecutable bool `json:"isExecutable,omitempty"`
 }
 
+// OsArchSpecificString 支持字符串或字符串数组（在 JSON 中）以及按 OS/ARCH 嵌套。
+// breaking change：仅保留 Values 记录全部候选值，业务代码应通过 Primary() 获取首选值。
 type OsArchSpecificString struct {
-	Value string
+	Values []string
+}
+
+// Primary 返回首选值（通常是列表中的第一个元素）。
+func (p OsArchSpecificString) Primary() string {
+	if len(p.Values) == 0 {
+		return ""
+	}
+	return p.Values[0]
 }
 
 type Config struct {
@@ -56,63 +66,79 @@ func (s *StringArray) UnmarshalJSON(data []byte) error {
 }
 
 func (p *OsArchSpecificString) UnmarshalJSON(data []byte) (err error) {
-	// Try to unmarshal the data into a string
-	var url string
-	err = json.Unmarshal(data, &url)
-	if err == nil {
-		/*
-			"https://xxx"
-		*/
-		p.Value = url
-		return
-	}
-
-	// Try to unmarshal the data into a map
-	var urlMap map[string]interface{}
-	err = json.Unmarshal(data, &urlMap)
-	if err == nil {
-		value, ok := urlMap[runtime.GOOS]
-		if !ok || value == nil {
-			fmt.Printf("no value for %s in %s\n", runtime.GOOS, string(data))
-			p.Value = ""
-		} else if url, ok := value.(string); ok {
-			/*
-				{
-					"darwin": "https://xxx",
-					"linux": "https://xxx",
-					"windows": "https://xxx"
-				}
-			*/
-			p.Value = url
-			return
-		} else if urlMapForArch, ok := value.(map[string]interface{}); ok {
-			value, ok := urlMapForArch[runtime.GOARCH]
-			if !ok || value == nil {
-				fmt.Printf("no value for %s/%s in %s\n", runtime.GOOS, runtime.GOARCH, string(data))
-				p.Value = ""
-			} else if url, ok := value.(string); ok {
-				/*
-					{
-						"darwin": ...,
-						"linux": ...,
-						"windows": {
-							"386": "https://xxx",
-							"amd64": "https://xxx"
-							"arm64": "https://xxx
-							"arm": "https://xxx"
-						}
-					}
-				*/
-				p.Value = url
-				return
-			} else {
-				return fmt.Errorf("value for %s/%s is not a string: %v", runtime.GOOS, runtime.GOARCH, value)
+	// 解析叶子节点：可能是 string 或 []string
+	parseLeaf := func(v interface{}) ([]string, error) {
+		switch x := v.(type) {
+		case string:
+			if x == "" {
+				return nil, nil
 			}
-		} else {
-			return fmt.Errorf("value for %s is not a string or a map: %v", runtime.GOOS, value)
+			return []string{x}, nil
+		case []interface{}:
+			arr := make([]string, 0, len(x))
+			for _, item := range x {
+				s, ok := item.(string)
+				if !ok || s == "" {
+					return nil, fmt.Errorf("array contains non-string or empty element: %v", item)
+				}
+				arr = append(arr, s)
+			}
+			return arr, nil
+		default:
+			return nil, fmt.Errorf("leaf is not string or []string: %v", v)
 		}
 	}
 
+	// 1. 直接尝试解析为 []string
+	var arr []string
+	if err = json.Unmarshal(data, &arr); err == nil {
+		if len(arr) > 0 {
+			p.Values = append(p.Values[:0], arr...)
+		}
+		return nil
+	}
+
+	// 2. 尝试解析为单字符串
+	var single string
+	if err = json.Unmarshal(data, &single); err == nil {
+		if single != "" {
+			p.Values = []string{single}
+		}
+		return nil
+	}
+
+	// 3. 尝试解析 OS/ARCH map
+	var urlMap map[string]interface{}
+	if err = json.Unmarshal(data, &urlMap); err == nil {
+		value, ok := urlMap[runtime.GOOS]
+		if !ok || value == nil {
+			fmt.Printf("no value for %s in %s\n", runtime.GOOS, string(data))
+			return nil
+		}
+		// OS 层可能是叶子或 ARCH map
+		if leafVals, lerr := parseLeaf(value); lerr == nil {
+			if len(leafVals) > 0 {
+				p.Values = leafVals
+			}
+			return nil
+		} else if urlMapForArch, ok2 := value.(map[string]interface{}); ok2 {
+			v2, ok3 := urlMapForArch[runtime.GOARCH]
+			if !ok3 || v2 == nil {
+				fmt.Printf("no value for %s/%s in %s\n", runtime.GOOS, runtime.GOARCH, string(data))
+				return nil
+			}
+			if leafVals, lerr2 := parseLeaf(v2); lerr2 == nil {
+				if len(leafVals) > 0 {
+					p.Values = leafVals
+				}
+				return nil
+			}
+			return fmt.Errorf("value for %s/%s is not valid leaf: %v", runtime.GOOS, runtime.GOARCH, v2)
+		}
+		return fmt.Errorf("value for %s is not valid leaf or arch map: %v", runtime.GOOS, value)
+	}
+
+	// 若都失败，返回最后一次错误（兼容旧行为）
 	return nil
 }
 
@@ -146,7 +172,7 @@ func LoadConfigFromBytes(data []byte) (conf Config, err error) {
 	for toolName, versions := range tempData {
 		// For each version, create a separate key with toolName@version
 		for version, versionData := range versions {
-			if versionData.DownloadURL.Value == "" {
+			if versionData.DownloadURL.Primary() == "" {
 				fmt.Printf("no download URL for %s/%s in %s@%s\n", runtime.GOOS, runtime.GOARCH, toolName, version)
 				continue
 			}

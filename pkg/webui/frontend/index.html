@@ -1,50 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>External Tools Manager</title>
-    <link rel="stylesheet" href="static/style.css">
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🛠️ <span data-i18n="title">External Tools Manager</span> <small id="platform-info" style="font-weight: normal; font-size: 0.7em; opacity: 0.7;"></small></h1>
-            <div class="lang-switcher">
-                <button class="lang-btn" data-lang="en">English</button>
-                <button class="lang-btn" data-lang="zh">中文</button>
-            </div>
-        </div>
-        <div id="tools-container" class="loading" data-i18n="loading">Loading tools...</div>
-    </div>
-
-    <!-- Template for tool card -->
-    <template id="tool-card-template">
-        <div class="tool-card">
-            <div class="tool-name"></div>
-            <div class="tool-version"></div>
-            <div class="tool-status"></div>
-            <div class="tool-meta-row">
-                <button class="secondary-btn folder-btn"></button>
-                <button class="secondary-btn info-btn"></button>
-            </div>
-            <div class="collapsible-panel folder-panel" style="display:none;"></div>
-            <pre class="collapsible-panel info-panel" style="display:none;"></pre>
-            <button class="install-btn"></button>
-            <button class="pause-btn"></button>
-            <button class="resume-btn"></button>
-            <button class="uninstall-btn"></button>
-            <div class="progress-container">
-                <div class="progress-bar">
-                    <div class="progress-fill"></div>
-                </div>
-                <div class="progress-text"></div>
-            </div>
-            <div class="error-message"></div>
-        </div>
-    </template>
-
-    <script src="static/i18n.js"></script>
-    <script src="static/app.js"></script>
-</body>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Remote Tools</title>
+    <script type="module" crossorigin src="/assets/index-Djg_-ozD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CJsjGcqm.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>

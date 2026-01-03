@@ -1,5 +1,12 @@
-external_tools
-main
-build
-dist
+# 构建产物
+build/
+dist/
 
+# 外部工具存储目录
+external_tools/
+
+# Node.js 依赖
+web/node_modules/
+
+# 编译产物
+*.exe

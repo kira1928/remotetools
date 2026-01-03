@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,10 +14,11 @@ import (
 
 var (
 	// Global flags
-	configPath = flag.String("config", "config/sample.json", "配置文件路径")
-	toolFolder = flag.String("tool-folder", "external_tools", "工具存储文件夹路径")
-	webui      = flag.Bool("webui", false, "是否启动 WebUI 服务器")
-	webuiPort  = flag.Int("webui-port", 8080, "WebUI 服务器端口")
+	configPath       = flag.String("config", "config/sample.json", "配置文件路径")
+	toolFolder       = flag.String("tool-folder", "external_tools", "工具存储文件夹路径")
+	webui            = flag.Bool("webui", false, "是否启动 WebUI 服务器")
+	webuiPort        = flag.Int("webui-port", 8080, "WebUI 服务器端口")
+	downloadLimitBPS = flag.Int64("download-limit-bps", -1, "下载限速（字节/秒，-1 表示沿用默认）")
 
 	// Command flags
 	listTools   = flag.Bool("list", false, "列出所有工具及其状态")
@@ -32,6 +34,10 @@ var (
 
 func main() {
 	flag.Parse()
+
+	if *downloadLimitBPS >= 0 {
+		tools.SetDownloadLimitBPS(*downloadLimitBPS)
+	}
 
 	// 设置工具文件夹
 	if *toolFolder != "" {
@@ -234,6 +240,10 @@ func handleInstall(name, version string) {
 
 	err = tool.Install()
 	if err != nil {
+		if errors.Is(err, tools.ErrDownloadPaused) {
+			fmt.Printf("工具 '%s' 下载已暂停，可稍后使用 -resume 或继续安装。\n", name)
+			return
+		}
 		fmt.Fprintf(os.Stderr, "安装失败: %v\n", err)
 		os.Exit(1)
 	}
@@ -277,6 +287,10 @@ func handleExecute(name, version string, args []string) {
 		fmt.Printf("工具 '%s' 未安装，正在安装...\n", name)
 		err = tool.Install()
 		if err != nil {
+			if errors.Is(err, tools.ErrDownloadPaused) {
+				fmt.Printf("工具 '%s' 下载已暂停，执行被中断。\n", name)
+				os.Exit(1)
+			}
 			fmt.Fprintf(os.Stderr, "安装失败: %v\n", err)
 			os.Exit(1)
 		}

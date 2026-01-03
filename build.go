@@ -13,7 +13,7 @@ import (
 )
 
 // 一个简单的、可跨平台的构建脚本，复刻原 Makefile 的核心目标：
-// build、debug、release、build-all、install、test、clean、run、help
+// build、dev、release、build-all、install、test、clean、run、help
 // 用法：
 //   go run ./build.go [task] [flags]
 // 例如：
@@ -66,8 +66,8 @@ func main() {
 	switch task {
 	case "build":
 		err = buildCurrent(opts, "")
-	case "debug":
-		err = buildCurrent(opts, "debug")
+	case "dev":
+		err = buildCurrent(opts, "dev")
 	case "release":
 		err = buildCurrent(opts, "release")
 	case "build-all":
@@ -156,7 +156,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("任务:")
 	fmt.Println("  build         构建当前平台")
-	fmt.Println("  debug         构建 debug 版本")
+	fmt.Println("  dev           构建 debug 版本")
 	fmt.Println("  release       构建 release 版本")
 	fmt.Println("  build-all     构建所有平台")
 	fmt.Println("  install       安装到 GOPATH/bin 或 GOBIN")
@@ -177,7 +177,7 @@ func buildCurrent(opts options, mode string) error {
 	fmt.Printf("构建 %s/%s (%s) ...\n", opts.goos, opts.goarch, modeOrDefault(mode))
 
 	outName := opts.appName
-	if mode == "debug" {
+	if mode == "dev" {
 		outName += "-debug"
 	}
 	if opts.goos == "windows" {
@@ -188,7 +188,7 @@ func buildCurrent(opts options, mode string) error {
 	args := []string{"build"}
 	// ldflags：避免引用不存在的 -X 变量导致链接失败，仅在 release 时做瘦身
 	switch mode {
-	case "debug":
+	case "dev":
 		// 关闭内联与优化方便调试
 		args = append(args, "-gcflags", "all=-N -l")
 	case "release":
@@ -334,7 +334,7 @@ func modeOrDefault(mode string) string {
 		return "default"
 	}
 	switch mode {
-	case "debug", "release":
+	case "dev", "release":
 		return mode
 	default:
 		return "custom"

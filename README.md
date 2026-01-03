@@ -13,15 +13,17 @@ A Go library for managing and executing remote tools with automatic version mana
 - **Real-time Progress**: Live download progress with speed indicators
 - **Multi-language UI**: English and Chinese interface support
 
-Now the repository uses a cross-platform Go build script `build.go`; the Makefile is just a thin wrapper that delegates to it.
+## Build
+
+The repository uses a cross-platform Go build script `build.go`; the Makefile is just a thin wrapper that delegates to it.
 
 Directly with Go:
 
 ```bash
 go run -tags buildtool ./build.go help
 go run -tags buildtool ./build.go build        # Build for current platform
-go run -tags buildtool ./build.go debug        # Debug build
-go run -tags buildtool ./build.go release      # Release build
+go run -tags buildtool ./build.go dev          # Development build with debug info
+go run -tags buildtool ./build.go release      # Release build (optimized)
 go run -tags buildtool ./build.go build-all    # Build for all target platforms
 go run -tags buildtool ./build.go test         # Run tests
 go run -tags buildtool ./build.go clean        # Clean artifacts
@@ -57,7 +59,7 @@ go get github.com/kira1928/remotetools
 package main
 
 import (
-    "github.com/kira1928/remotetools/pkg/tools"
+  "github.com/kira1928/remotetools/pkg/tools"
 )
 
 func main() {
@@ -80,7 +82,7 @@ func main() {
 }
 ```
 
-### Multiple tool roots (read-only + read-write)
+### Multiple Tool Roots (Read-only + Read-write)
 
 Tool discovery supports multiple read-only roots plus one writable root. Typical container scenario:
 
@@ -91,13 +93,13 @@ Lookup order: read-only roots (in order) -> writable root. If still not found an
 
 ```go
 // 1) Configure read-only roots (order matters)
-tools.SetReadOnlyToolFolders([]string{
+tools.SetReadOnlyRootFolders([]string{
   "/opt/tools-ro",
   "/usr/local/tools-ro",
 })
 
 // 2) Configure writable root (install/uninstall target)
-tools.SetToolFolder("/data/tools")
+tools.SetRootFolder("/data/tools")
 
 // 3) Load config and get tool
 api := tools.Get()
@@ -111,7 +113,7 @@ _ = t.Execute("--version")
 ```
 
 Notes:
-- Uninstall operates only on the writable root and won’t modify read-only roots;
+- Uninstall operates only on the writable root and won't modify read-only roots;
 - If no read-only roots are set, behavior is unchanged from before;
 - Auto version selection checks all candidate roots to pick the highest installed version.
 
@@ -130,6 +132,14 @@ status := tools.Get().GetWebUIStatus()
 // Stop when done
 tools.Get().StopWebUI()
 ```
+
+### isExecutable and Execution Permission (noexec scenarios)
+
+- `isExecutable` (boolean, default `true`): Indicates whether the entry is a directly executable program. For AnyCPU dlls, pure resource packages, etc., set to `false`. The frontend will hide the "View Info" button and show a "Non-executable" indicator.
+- After installation, if `isExecutable = true`, remotetools will automatically detect if the storage directory supports execution; if not and a temp execution directory is configured (`SetTmpRootFolderForExecPermission`), it will copy to the temp directory and re-check; if still fails, installation fails.
+- The WebUI displays the current platform (e.g., `linux/amd64`) on the title bar and shows a "Temp Dir Execution" badge next to tool versions to indicate execution from temp directory.
+
+See docs/IS_EXECUTABLE.md for more details.
 
 ## Configuration
 
@@ -161,6 +171,51 @@ Tools are configured in JSON format:
 - [Basic Usage](examples/usage_scenarios/main.go) - Common usage patterns
 - [Multi-version Demo](examples/multi_version_demo/main.go) - Managing multiple versions
 - [Web UI Demo](examples/webui_demo/main.go) - Browser-based management interface
+
+## Frontend Development
+
+The Web UI frontend is built with React + TypeScript + Vite.
+
+### Development Mode
+
+```bash
+cd web
+npm install
+npm run dev   # Start dev server on port 5173
+```
+
+API requests are proxied to `http://localhost:8080`. You need to start the backend first:
+
+```bash
+go run ./examples/webui_demo/main.go
+```
+
+### Build Frontend
+
+```bash
+cd web
+npm run build   # Output to pkg/webui/frontend/
+```
+
+The compiled frontend assets are committed to git with content-hashed filenames (e.g., `index-abc123.js`) so that Go developers can use this library out-of-the-box without needing to build the frontend. The hash ensures proper browser cache invalidation when content changes.
+
+## Download Speed Limit (for testing UI)
+
+To observe multi-mirror downloads and progress animations, you can temporarily limit download speed via CLI arguments or environment variables:
+
+```powershell
+# CLI example: limit to ~200KB/s
+remotetools.exe -download-limit-bps 200000 -tool dotnet -install
+
+# Or via environment variable:
+$env:REMOTETOOLS_DOWNLOAD_LIMIT_BPS = "200000"
+```
+
+Notes:
+- Unit is bytes per second;
+- CLI argument `-download-limit-bps` takes precedence over environment variable;
+- Supports underscore or comma separators: `1_000_000`, `1,000,000`;
+- When set to 0 or not set, no limit is applied; only affects downloads in the current process.
 
 ## Documentation
 

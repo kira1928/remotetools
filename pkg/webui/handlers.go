@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -26,12 +27,43 @@ type ToolInfo struct {
 	ExecFromTemp  bool   `json:"execFromTemp,omitempty"`
 	// 是否为可执行程序（由配置项 isExecutable 指示）
 	IsExecutable bool `json:"isExecutable"`
+	// 是否启用
+	Enabled bool `json:"enabled"`
+	// 最近一次下载过程快照
+	DownloadProcess ToolDownloadProcess `json:"downloadProcess,omitempty"`
+	// MetadataJSON 保存格式化的原始元数据内容，供前端展开查看
+	MetadataJSON string `json:"metadataJson,omitempty"`
+}
+
+// ToolGroupOverview 汇总同名工具的不同版本信息。
+type ToolGroupOverview struct {
+	Name    string     `json:"name"`
+	Enabled bool       `json:"enabled"`
+	Tools   []ToolInfo `json:"tools"`
+}
+
+// ToolDownloadProcess 表示下载进度的快照信息
+type ToolDownloadProcess struct {
+	CurrentDownloadURLIndex int      `json:"currentDownloadUrlIndex,omitempty"`
+	FileSize                int64    `json:"fileSize,omitempty"`
+	Status                  string   `json:"status,omitempty"`
+	AttemptIndex            int      `json:"attemptIndex,omitempty"`
+	TotalAttempts           int      `json:"totalAttempts,omitempty"`
+	CurrentURL              string   `json:"currentUrl,omitempty"`
+	FailedURLs              []string `json:"failedUrls,omitempty"`
+	AllURLs                 []string `json:"allUrls,omitempty"`
 }
 
 // InstallRequest represents an installation request
 type InstallRequest struct {
 	ToolName string `json:"toolName"`
 	Version  string `json:"version"`
+}
+
+// ToggleRequest 用于启用/禁用工具
+type ToggleRequest struct {
+	ToolName string `json:"toolName"`
+	Enabled  bool   `json:"enabled"`
 }
 
 // ProgressMessage represents a progress update message for SSE
@@ -43,11 +75,17 @@ type ProgressMessage struct {
 	DownloadedBytes int64   `json:"downloadedBytes,omitempty"`
 	Speed           float64 `json:"speed,omitempty"`
 	Error           string  `json:"error,omitempty"`
+	// 镜像/多源相关：当前尝试的第几个源（1-based）、总数、当前 URL、已失败 URL 列表
+	AttemptIndex  int      `json:"attemptIndex,omitempty"`
+	TotalAttempts int      `json:"totalAttempts,omitempty"`
+	CurrentURL    string   `json:"currentUrl,omitempty"`
+	FailedURLs    []string `json:"failedUrls,omitempty"`
+	AllURLs       []string `json:"allUrls,omitempty"`
 }
 
 // APIAdapter provides methods needed from tools API without import cycle
 type APIAdapter interface {
-	ListTools() ([]ToolInfo, error)
+	ListToolGroups() ([]ToolGroupOverview, error)
 	InstallTool(toolName, version string, progressCallback func(ProgressMessage)) error
 	UninstallTool(toolName, version string) error
 	// GetDownloadInfo returns partial download information (bytes and total) for a tool version
@@ -58,8 +96,12 @@ type APIAdapter interface {
 	GetToolFolders(toolName, version string) (storage string, exec string, err error)
 	// GetToolInfoString executes configured printInfoCmd and returns stdout
 	GetToolInfoString(toolName, version string) (string, error)
+	// GetToolMetadata returns latest metadata JSON string for a tool version
+	GetToolMetadata(toolName, version string) (string, error)
 	// ListActiveInstalls returns active install keys in the form tool@version
 	ListActiveInstalls() []string
+	// SetToolGroupEnabled 切换工具组启用状态
+	SetToolGroupEnabled(toolName string, enabled bool) error
 }
 
 var (
@@ -82,63 +124,45 @@ func SetAPIAdapter(adapter APIAdapter) {
 
 // setupRoutes configures the HTTP routes
 func (s *WebUIServer) setupRoutes(mux *http.ServeMux) {
-	// Serve static files
-	frontendSubFS, err := fs.Sub(frontendFS, "frontend")
-	if err != nil {
-		panic(err)
-	}
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(frontendSubFS))))
 
 	// API routes
-	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/tools", handleListTools)
 	mux.HandleFunc("/api/install", handleInstall)
 	mux.HandleFunc("/api/uninstall", handleUninstall)
 	mux.HandleFunc("/api/progress", handleSSE)
 	mux.HandleFunc("/api/active", handleActiveTasks)
 	mux.HandleFunc("/api/pause", handlePause)
+	mux.HandleFunc("/api/toggle", handleToggle)
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/tool-path", handleToolPath)
 	mux.HandleFunc("/api/tool-info", handleToolInfo)
+	mux.HandleFunc("/api/tool-metadata", handleToolMetadata)
 	mux.HandleFunc("/api/platform", handlePlatform)
-}
 
-// handleIndex serves the main HTML page
-func handleIndex(w http.ResponseWriter, r *http.Request) {
-	// Only serve index.html for root path
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-
-	data, err := frontendFS.ReadFile("frontend/index.html")
+	// Serve static files
+	frontendSubFS, err := fs.Sub(frontendFS, "frontend")
 	if err != nil {
-		http.Error(w, "Failed to load page", http.StatusInternalServerError)
-		return
+		panic(err)
 	}
+	mux.Handle("/", http.FileServer(http.FS(frontendSubFS)))
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := w.Write(data); err != nil {
-		// best-effort write; log or ignore
-		return
-	}
 }
 
-// handleListTools returns a list of all tools from config
+// handleListTools returns tool groups information for front-end rendering.
 func handleListTools(w http.ResponseWriter, r *http.Request) {
 	if apiAdapter == nil {
 		http.Error(w, "API not initialized", http.StatusInternalServerError)
 		return
 	}
 
-	toolsList, err := apiAdapter.ListTools()
+	groups, err := apiAdapter.ListToolGroups()
 	if err != nil {
 		http.Error(w, "Failed to list tools: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(toolsList); err != nil {
+	if err := json.NewEncoder(w).Encode(groups); err != nil {
 		return
 	}
 }
@@ -380,16 +404,55 @@ func handlePause(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleToggle 处理启用/禁用请求
+func handleToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if apiAdapter == nil {
+		http.Error(w, "API not initialized", http.StatusInternalServerError)
+		return
+	}
+	var req ToggleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ToolName == "" {
+		http.Error(w, "toolName is required", http.StatusBadRequest)
+		return
+	}
+	if err := apiAdapter.SetToolGroupEnabled(req.ToolName, req.Enabled); err != nil {
+		http.Error(w, "Failed to toggle: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	status := "disabled"
+	if req.Enabled {
+		status = "enabled"
+	}
+	broadcastProgress(ProgressMessage{
+		ToolName: req.ToolName,
+		Status:   status,
+	})
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte("OK")); err != nil {
+		return
+	}
+}
+
 // ToolRuntimeStatus provides runtime status for a tool on UI
 type ToolRuntimeStatus struct {
-	Name            string `json:"name"`
-	Version         string `json:"version"`
-	Installed       bool   `json:"installed"`
-	Preinstalled    bool   `json:"preinstalled"`
-	Downloading     bool   `json:"downloading"`
-	Paused          bool   `json:"paused"`
-	DownloadedBytes int64  `json:"downloadedBytes"`
-	TotalBytes      int64  `json:"totalBytes"`
+	Name            string              `json:"name"`
+	Version         string              `json:"version"`
+	Installed       bool                `json:"installed"`
+	Preinstalled    bool                `json:"preinstalled"`
+	Downloading     bool                `json:"downloading"`
+	Paused          bool                `json:"paused"`
+	DownloadedBytes int64               `json:"downloadedBytes"`
+	TotalBytes      int64               `json:"totalBytes"`
+	Enabled         bool                `json:"enabled"`
+	DownloadProcess ToolDownloadProcess `json:"downloadProcess,omitempty"`
 }
 
 // handleStatus returns runtime status for all tools (installed/downloading/paused and progress)
@@ -399,7 +462,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	toolsList, err := apiAdapter.ListTools()
+	groups, err := apiAdapter.ListToolGroups()
 	if err != nil {
 		http.Error(w, "Failed to list tools: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -413,25 +476,29 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	activeInstallsMu.RUnlock()
 
-	statuses := make([]ToolRuntimeStatus, 0, len(toolsList))
-	for _, t := range toolsList {
-		key := t.Name + "@" + t.Version
-		downloading := active[key]
-		downloadedBytes, totalBytes, derr := apiAdapter.GetDownloadInfo(t.Name, t.Version)
-		if derr != nil {
-			downloadedBytes, totalBytes = 0, 0
+	statuses := make([]ToolRuntimeStatus, 0, 16)
+	for _, group := range groups {
+		for _, t := range group.Tools {
+			key := t.Name + "@" + t.Version
+			downloading := active[key]
+			downloadedBytes, totalBytes, derr := apiAdapter.GetDownloadInfo(t.Name, t.Version)
+			if derr != nil {
+				downloadedBytes, totalBytes = 0, 0
+			}
+			paused := !t.Installed && !downloading && (downloadedBytes > 0 || t.DownloadProcess.Status == "paused")
+			statuses = append(statuses, ToolRuntimeStatus{
+				Name:            t.Name,
+				Version:         t.Version,
+				Installed:       t.Installed,
+				Preinstalled:    t.Preinstalled,
+				Downloading:     downloading,
+				Paused:          paused,
+				DownloadedBytes: downloadedBytes,
+				TotalBytes:      totalBytes,
+				Enabled:         group.Enabled,
+				DownloadProcess: t.DownloadProcess,
+			})
 		}
-		paused := !t.Installed && !downloading && downloadedBytes > 0
-		statuses = append(statuses, ToolRuntimeStatus{
-			Name:            t.Name,
-			Version:         t.Version,
-			Installed:       t.Installed,
-			Preinstalled:    t.Preinstalled,
-			Downloading:     downloading,
-			Paused:          paused,
-			DownloadedBytes: downloadedBytes,
-			TotalBytes:      totalBytes,
-		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -490,6 +557,32 @@ func handleToolInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"info": info})
+}
+
+// handleToolMetadata returns latest metadata JSON string for a tool version
+func handleToolMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if apiAdapter == nil {
+		http.Error(w, "API not initialized", http.StatusInternalServerError)
+		return
+	}
+	q := r.URL.Query()
+	toolName := q.Get("toolName")
+	version := q.Get("version")
+	if strings.TrimSpace(toolName) == "" || strings.TrimSpace(version) == "" {
+		http.Error(w, "toolName and version are required", http.StatusBadRequest)
+		return
+	}
+	metadata, err := apiAdapter.GetToolMetadata(toolName, version)
+	if err != nil {
+		http.Error(w, "Failed to get metadata: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"metadata": metadata})
 }
 
 // handlePlatform returns current runtime platform (os/arch)

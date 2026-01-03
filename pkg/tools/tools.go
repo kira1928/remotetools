@@ -2,10 +2,13 @@ package tools
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +50,15 @@ var roRootFolders []string
 // 可执行权限的临时目录：当 rootFolder 所在挂载点不支持 exec 时，工具会复制到此处运行
 var tmpExecRootFolder string
 
+// 下载限速覆盖值（命令行设置）
+var (
+	downloadLimitMu          sync.RWMutex
+	downloadLimitOverride    int64
+	downloadLimitOverrideSet bool
+	envLimitOnce             sync.Once
+	envLimitCached           int64
+)
+
 // SetRootFolder 设置可写入的根目录
 func SetRootFolder(folder string) {
 	rootFolder = folder
@@ -60,6 +72,50 @@ func GetRootFolder() string {
 // SetTmpRootFolderForExecPermission 设置在可写目录不可执行时用于运行的临时目录
 func SetTmpRootFolderForExecPermission(folder string) {
 	tmpExecRootFolder = folder
+}
+
+// SetDownloadLimitBPS 设置下载速率上限（字节/秒）。传入 0 表示不限速，负值会当作 0。
+// 该设置会覆盖环境变量 REMOTETOOLS_DOWNLOAD_LIMIT_BPS。
+func SetDownloadLimitBPS(limit int64) {
+	if limit < 0 {
+		limit = 0
+	}
+	downloadLimitMu.Lock()
+	downloadLimitOverride = limit
+	downloadLimitOverrideSet = true
+	downloadLimitMu.Unlock()
+}
+
+// getDownloadLimitBPS 返回当前生效的下载限速（字节/秒）。
+// 优先使用命令行覆盖值，否则按需读取环境变量。
+func getDownloadLimitBPS() int64 {
+	downloadLimitMu.RLock()
+	override := downloadLimitOverride
+	overrideSet := downloadLimitOverrideSet
+	downloadLimitMu.RUnlock()
+	if overrideSet {
+		return override
+	}
+	envLimitOnce.Do(func() {
+		envLimitCached = parseDownloadLimitFromEnv()
+	})
+	return envLimitCached
+}
+
+func parseDownloadLimitFromEnv() int64 {
+	raw := os.Getenv("REMOTETOOLS_DOWNLOAD_LIMIT_BPS")
+	if raw == "" {
+		return 0
+	}
+	clean := strings.ReplaceAll(strings.ReplaceAll(raw, ",", ""), "_", "")
+	if clean == "" {
+		return 0
+	}
+	val, err := strconv.ParseInt(clean, 10, 64)
+	if err != nil || val < 0 {
+		return 0
+	}
+	return val
 }
 
 // GetTmpRootFolderForExecPermission 返回当前配置的临时执行目录
@@ -159,6 +215,147 @@ func copyDir(src, dst string) error {
 	return nil
 }
 
+func firstNonEmpty(values []string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func discoverToolsUnderRoot(root string) map[string]*config.ToolConfig {
+	result := make(map[string]*config.ToolConfig)
+	if strings.TrimSpace(root) == "" {
+		return result
+	}
+	osArchPath := filepath.Join(root, runtime.GOOS, runtime.GOARCH)
+	entries, err := os.ReadDir(osArchPath)
+	if err != nil {
+		return result
+	}
+
+	for _, toolEntry := range entries {
+		if !toolEntry.IsDir() {
+			continue
+		}
+		toolName := strings.TrimSpace(toolEntry.Name())
+		if toolName == "" {
+			continue
+		}
+		toolDir := filepath.Join(osArchPath, toolEntry.Name())
+		versionEntries, err := os.ReadDir(toolDir)
+		if err != nil {
+			continue
+		}
+		for _, versionEntry := range versionEntries {
+			if !versionEntry.IsDir() {
+				continue
+			}
+			versionName := strings.TrimSpace(versionEntry.Name())
+			if versionName == "" || strings.HasPrefix(versionName, ".tmp_") || strings.HasPrefix(versionName, ".trash-") {
+				continue
+			}
+			toolFolder := filepath.Join(toolDir, versionEntry.Name())
+			metaCandidates := []string{
+				filepath.Clean(toolFolder + MetadataFilenameSuffix),
+				filepath.Join(toolFolder, MetadataFilenameSuffix),
+			}
+			var meta *ToolMetadata
+			for _, candidate := range metaCandidates {
+				info, err := os.Stat(candidate)
+				if err != nil || info.IsDir() {
+					continue
+				}
+				m, err := loadMetadataFile(candidate)
+				if err != nil {
+					log.Printf("[%s@%s] 解析元数据失败: %v", toolName, versionName, err)
+					continue
+				}
+				meta = m
+				break
+			}
+			if meta == nil {
+				continue
+			}
+			entryRel := strings.TrimSpace(meta.PathToEntry)
+			if entryRel == "" {
+				continue
+			}
+			entryAbs := filepath.Join(toolFolder, entryRel)
+			info, err := os.Stat(entryAbs)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			key := toolName + "@" + versionName
+			if _, exists := result[key]; exists {
+				continue
+			}
+			downloadValues := append([]string(nil), meta.DownloadURL...)
+			cfg := &config.ToolConfig{
+				ToolName:     toolName,
+				Version:      versionName,
+				DownloadURL:  config.OsArchSpecificString{Values: downloadValues},
+				PathToEntry:  config.OsArchSpecificString{Values: []string{entryRel}},
+				PrintInfoCmd: append(config.StringArray{}, meta.PrintInfoCmd...),
+				IsExecutable: true,
+			}
+			result[key] = cfg
+		}
+	}
+
+	return result
+}
+
+func (p *API) refreshDiscoveredToolConfigs(force bool) {
+	p.discoveredMu.Lock()
+	defer p.discoveredMu.Unlock()
+	if !force && time.Since(p.lastDiscoveredScan) < discoveredScanInterval {
+		return
+	}
+	aggregated := make(map[string]*config.ToolConfig)
+	for _, root := range getCandidateRootFolders() {
+		for key, cfg := range discoverToolsUnderRoot(root) {
+			if _, exists := aggregated[key]; !exists {
+				aggregated[key] = cfg
+			}
+		}
+	}
+	p.discoveredConfigs = aggregated
+	p.lastDiscoveredScan = time.Now()
+}
+
+func (p *API) getToolConfigByKey(key string) (*config.ToolConfig, bool) {
+	if p.config.ToolConfigs != nil {
+		if cfg, ok := p.config.ToolConfigs[key]; ok {
+			return cfg, true
+		}
+	}
+	p.refreshDiscoveredToolConfigs(false)
+	p.discoveredMu.RLock()
+	defer p.discoveredMu.RUnlock()
+	cfg, ok := p.discoveredConfigs[key]
+	return cfg, ok
+}
+
+func (p *API) getAllToolConfigs() map[string]*config.ToolConfig {
+	result := make(map[string]*config.ToolConfig)
+	if p.config.ToolConfigs != nil {
+		for key, cfg := range p.config.ToolConfigs {
+			result[key] = cfg
+		}
+	}
+	p.refreshDiscoveredToolConfigs(false)
+	p.discoveredMu.RLock()
+	for key, cfg := range p.discoveredConfigs {
+		if _, exists := result[key]; !exists {
+			result[key] = cfg
+		}
+	}
+	p.discoveredMu.RUnlock()
+	return result
+}
+
 // SetReadOnlyRootFolders 设置只读根目录列表（查找顺序按给定顺序）。
 func SetReadOnlyRootFolders(folders []string) {
 	roRootFolders = make([]string, 0, len(folders))
@@ -191,9 +388,32 @@ func getCandidateRootFolders() []string {
 	return roots
 }
 
+// getOrCreateToolGroup 返回指定工具的工具组实例，若不存在则创建。
+func (p *API) getOrCreateToolGroup(toolName string) *ToolGroup {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return nil
+	}
+	p.groupMu.RLock()
+	group := p.toolGroups[name]
+	p.groupMu.RUnlock()
+	if group != nil {
+		return group
+	}
+	p.groupMu.Lock()
+	defer p.groupMu.Unlock()
+	if group = p.toolGroups[name]; group == nil {
+		group = newToolGroup(name)
+		p.toolGroups[name] = group
+	}
+	return group
+}
+
 var (
 	instance *API
 )
+
+const discoveredScanInterval = 10 * time.Second
 
 type API struct {
 	config        config.Config
@@ -201,6 +421,13 @@ type API struct {
 	webUIServer   *webui.WebUIServer
 	// 保护 toolInstances 的并发读写
 	toolMu sync.RWMutex
+	// 本地扫描到的已安装但不在配置中的工具
+	discoveredMu       sync.RWMutex
+	discoveredConfigs  map[string]*config.ToolConfig
+	lastDiscoveredScan time.Time
+	// toolGroups 管理同名工具共享的启用状态
+	groupMu    sync.RWMutex
+	toolGroups map[string]*ToolGroup
 }
 
 func (p *API) LoadConfig(path string) (err error) {
@@ -240,12 +467,14 @@ func (p *API) GetToolAuto(toolName string, strategy AutoVersionStrategy) (tool T
 		return tool, nil
 	}
 
-	if p.config.ToolConfigs == nil {
-		return nil, fmt.Errorf("config is not loaded")
+	configs := p.getAllToolConfigs()
+
+	if len(configs) == 0 {
+		return nil, fmt.Errorf("tool %s not found", toolName)
 	}
 
 	// Check for direct key match (single version)
-	if toolConfig, ok := p.config.ToolConfigs[toolName]; ok {
+	if toolConfig, ok := configs[toolName]; ok {
 		// 双重检查，避免重复创建
 		p.toolMu.RLock()
 		if cachedTool, exists := p.toolInstances[toolName]; exists && cachedTool != nil {
@@ -254,7 +483,8 @@ func (p *API) GetToolAuto(toolName string, strategy AutoVersionStrategy) (tool T
 		}
 		p.toolMu.RUnlock()
 
-		tool = NewDownloadTool(toolConfig)
+		group := p.getOrCreateToolGroup(toolConfig.ToolName)
+		tool = NewDownloadTool(toolConfig, group)
 		p.toolMu.Lock()
 		// 二次判断，防止并发创建
 		if cachedTool, exists := p.toolInstances[toolName]; exists && cachedTool != nil {
@@ -267,16 +497,21 @@ func (p *API) GetToolAuto(toolName string, strategy AutoVersionStrategy) (tool T
 	}
 
 	// Find all versions of this tool
-	var availableVersions []string
-	for key := range p.config.ToolConfigs {
+	availableSet := make(map[string]struct{})
+	for key := range configs {
 		if strings.HasPrefix(key, toolName+"@") {
 			version := strings.TrimPrefix(key, toolName+"@")
-			availableVersions = append(availableVersions, version)
+			if version != "" {
+				availableSet[version] = struct{}{}
+			}
 		}
 	}
-
-	if len(availableVersions) == 0 {
-		return nil, fmt.Errorf("tool %s not found in config", toolName)
+	if len(availableSet) == 0 {
+		return nil, fmt.Errorf("tool %s not found", toolName)
+	}
+	availableVersions := make([]string, 0, len(availableSet))
+	for version := range availableSet {
+		availableVersions = append(availableVersions, version)
 	}
 
 	var selectedVersion string
@@ -314,14 +549,14 @@ func (p *API) getHighestInstalledVersion(toolName string, versions []string) str
 
 	for _, version := range versions {
 		key := toolName + "@" + version
-		toolConfig, ok := p.config.ToolConfigs[key]
-		if !ok {
+		toolConfig, ok := p.getToolConfigByKey(key)
+		if !ok || toolConfig == nil {
 			continue
 		}
 		// 在所有候选根目录中查找是否存在该版本
 		for _, root := range getCandidateRootFolders() {
 			toolFolder := generateToolFolderPath(root, toolName, version)
-			toolPath := filepath.Join(toolFolder, toolConfig.PathToEntry.Value)
+			toolPath := filepath.Join(toolFolder, toolConfig.PathToEntry.Primary())
 			if _, err := os.Stat(toolPath); err == nil {
 				installedVersions = append(installedVersions, version)
 				break
@@ -357,33 +592,101 @@ func (p *API) GetToolWithVersion(toolName, version string) (tool Tool, err error
 		return
 	}
 
-	if p.config.ToolConfigs == nil {
-		err = fmt.Errorf("config is not loaded")
+	toolConfig, found := p.getToolConfigByKey(key)
+	if !found || toolConfig == nil {
+		return nil, fmt.Errorf("tool %s@%s not found", toolName, version)
+	}
+
+	// 双重检查：创建前后都判断缓存
+	p.toolMu.RLock()
+	if cached, exists := p.toolInstances[key]; exists && cached != nil {
+		p.toolMu.RUnlock()
+		return cached, nil
+	}
+	p.toolMu.RUnlock()
+
+	group := p.getOrCreateToolGroup(toolConfig.ToolName)
+	t := NewDownloadTool(toolConfig, group)
+	p.toolMu.Lock()
+	if cached, exists := p.toolInstances[key]; exists && cached != nil {
+		tool = cached
+		p.toolMu.Unlock()
 		return
 	}
+	p.toolInstances[key] = t
+	p.toolMu.Unlock()
+	return t, nil
+}
 
-	if toolConfig, ok := p.config.ToolConfigs[key]; ok {
-		// 双重检查：创建前后都判断缓存
-		p.toolMu.RLock()
-		if cached, exists := p.toolInstances[key]; exists && cached != nil {
-			p.toolMu.RUnlock()
-			tool = cached
-			return
-		}
-		p.toolMu.RUnlock()
-
-		t := NewDownloadTool(toolConfig)
-		p.toolMu.Lock()
-		if cached, exists := p.toolInstances[key]; exists && cached != nil {
-			tool = cached
-			p.toolMu.Unlock()
-			return
-		}
-		p.toolInstances[key] = t
-		p.toolMu.Unlock()
-		tool = t
+// SetToolGroupEnabled 切换整组工具的启用状态。
+func (p *API) SetToolGroupEnabled(toolName string, enabled bool) error {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return fmt.Errorf("tool name is required")
 	}
-	return
+	group := p.getOrCreateToolGroup(name)
+	if group == nil {
+		return fmt.Errorf("tool group %s not found", name)
+	}
+	return group.SetEnabled(enabled)
+}
+
+// SetToolEnabled 兼容旧接口，内部转发到工具组级别的开关。
+func (p *API) SetToolEnabled(toolName, _ string, enabled bool) error {
+	return p.SetToolGroupEnabled(toolName, enabled)
+}
+
+// IsToolGroupEnabled 返回整组工具当前是否处于启用状态。
+func (p *API) IsToolGroupEnabled(toolName string) (bool, error) {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return true, fmt.Errorf("tool name is required")
+	}
+	group := p.getOrCreateToolGroup(name)
+	if group == nil {
+		return true, fmt.Errorf("tool group %s not found", name)
+	}
+	return group.IsEnabled(), nil
+}
+
+// ListToolGroups 返回当前已知的工具组快照列表，包含配置文件、已创建的组以及磁盘上残留的组元数据。
+func (p *API) ListToolGroups() []ToolGroupSnapshot {
+	names := make(map[string]struct{})
+	configs := p.getAllToolConfigs()
+	for key := range configs {
+		if idx := strings.Index(key, "@"); idx > 0 {
+			names[key[:idx]] = struct{}{}
+		} else {
+			names[key] = struct{}{}
+		}
+	}
+	p.groupMu.RLock()
+	for name := range p.toolGroups {
+		names[name] = struct{}{}
+	}
+	p.groupMu.RUnlock()
+	groupDir := filepath.Join(GetRootFolder(), runtime.GOOS, runtime.GOARCH, "_groups")
+	if entries, err := os.ReadDir(groupDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := strings.TrimSuffix(entry.Name(), ".json")
+			if name != "" {
+				names[name] = struct{}{}
+			}
+		}
+	}
+	snapshots := make([]ToolGroupSnapshot, 0, len(names))
+	for name := range names {
+		if group := p.getOrCreateToolGroup(name); group != nil {
+			snapshots = append(snapshots, group.Snapshot())
+		}
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].ToolName < snapshots[j].ToolName
+	})
+	return snapshots
 }
 
 // CleanupTrash removes any leftover .trash-* folders in the tool directory
@@ -413,8 +716,10 @@ func CleanupTrash() {
 
 func init() {
 	instance = &API{
-		toolInstances: make(map[string]Tool),
-		webUIServer:   webui.NewWebUIServer(),
+		toolInstances:     make(map[string]Tool),
+		webUIServer:       webui.NewWebUIServer(),
+		discoveredConfigs: make(map[string]*config.ToolConfig),
+		toolGroups:        make(map[string]*ToolGroup),
 	}
 	// Set the webui adapter to avoid import cycles
 	webui.SetAPIAdapter(&webuiAdapter{api: instance})

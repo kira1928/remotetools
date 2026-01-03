@@ -13,7 +13,10 @@
         },
         "windows": {
           "386": "https://download.visualstudio.microsoft.com/download/pr/2f8a6349-c15b-47d6-a45a-7b59e21edc39/78c224dcc55cc2684f30ccda1f029ee1/dotnet-runtime-8.0.5-win-x86.zip",
-          "amd64": "https://download.visualstudio.microsoft.com/download/pr/77650902-a341-4f4c-934f-db7056cbfa78/176d961f8bbc798596f8d498ede4cc73/dotnet-runtime-8.0.5-win-x64.zip"
+          "amd64": [
+            "https://mirror.example.com/dotnet-runtime-8.0.5-win-x64.zip",
+            "https://download.visualstudio.microsoft.com/download/pr/77650902-a341-4f4c-934f-db7056cbfa78/176d961f8bbc798596f8d498ede4cc73/dotnet-runtime-8.0.5-win-x64.zip"
+          ]
         }
       },
       "pathToEntry": {
@@ -67,6 +70,110 @@
       "printInfoCmd": [
         "--version"
       ]
+    }
+  },
+  "bililive-recorder": {
+    "v2.17.3": {
+      "downloadUrl": [
+        "https://bililive-go.com/remotetools/download?downloadurl=https://github.com/BililiveRecorder/BililiveRecorder/releases/download/v2.17.3/BililiveRecorder-CLI-any.zip",
+        "https://github.com/BililiveRecorder/BililiveRecorder/releases/download/v2.17.3/BililiveRecorder-CLI-any.zip"
+      ],
+      "pathToEntry": "BililiveRecorder.Cli.dll",
+      "printInfoCmd": [
+        ""
+      ],
+      "isExecutable": false
+    }
+  },
+  "ffmpeg": {
+    "n8.0-latest": {
+      "downloadUrl": {
+        "linux": {
+          "amd64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-linux64-gpl-8.0.tar.xz",
+          "arm64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-linuxarm64-gpl-8.0.tar.xz"
+        },
+        "windows": {
+          "amd64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-win64-gpl-8.0.zip",
+          "arm64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-winarm64-gpl-8.0.zip"
+        }
+      },
+      "pathToEntry": {
+        "linux": "bin/ffmpeg",
+        "windows": "bin/ffmpeg.exe"
+      },
+      "printInfoCmd": [
+        "-version"
+      ]
+    }
+  },
+  "node": {
+    "v20.10.0": {
+      "downloadUrl": {
+        "darwin": {
+          "amd64": "https://nodejs.org/dist/v20.10.0/node-v20.10.0-darwin-x64.tar.xz",
+          "arm64": "https://nodejs.org/dist/v20.10.0/node-v20.10.0-darwin-arm64.tar.xz"
+        },
+        "linux": {
+          "amd64": "https://nodejs.org/dist/v20.10.0/node-v20.10.0-linux-x64.tar.xz",
+          "arm64": "https://nodejs.org/dist/v20.10.0/node-v20.10.0-linux-arm64.tar.xz",
+          "arm": "https://nodejs.org/dist/v20.10.0/node-v20.10.0-linux-armv7l.tar.xz"
+        },
+        "windows": {
+          "amd64": "https://nodejs.org/dist/v20.10.0/node-v20.10.0-win-x64.zip",
+          "arm64": "https://nodejs.org/dist/v20.10.0/node-v20.10.0-win-arm64.zip"
+        }
+      },
+      "pathToEntry": {
+        "darwin": "bin/node",
+        "linux": "bin/node",
+        "windows": "node.exe"
+      },
+      "printInfoCmd": [
+        "--version"
+      ]
+    }
+  },
+  "biliLive-tools": {
+    "3.1.2-bgo.1": {
+      "downloadUrl": {
+        "darwin": {
+          "amd64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.1/bililive-cli-lib-macos-x64.zip",
+          "arm64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.1/bililive-cli-lib-macos-arm64.zip"
+        },
+        "linux": {
+          "amd64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.1/bililive-cli-lib-ubuntu-x64.zip",
+          "arm64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.1/bililive-cli-lib-ubuntu-arm64.zip"
+        },
+        "windows": {
+          "amd64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.1/bililive-cli-lib-windows-x64.zip"
+        }
+      },
+      "pathToEntry": "index.cjs",
+      "printInfoCmd": [
+        "--help"
+      ],
+      "isExecutable": false
+    },
+    "3.1.2-bgo.2": {
+      "downloadUrl": {
+        "darwin": {
+          "amd64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.2/bililive-cli-lib-macos-x64.zip",
+          "arm64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.2/bililive-cli-lib-macos-arm64.zip"
+        },
+        "linux": {
+          "amd64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.2/bililive-cli-lib-ubuntu-x64.zip",
+          "arm64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.2/bililive-cli-lib-ubuntu-arm64.zip",
+          "arm": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.2/bililive-cli-lib-ubuntu-armv7.zip"
+        },
+        "windows": {
+          "amd64": "https://github.com/kira1928/biliLive-tools/releases/download/3.1.2-bgo.2/bililive-cli-lib-windows-x64.zip"
+        }
+      },
+      "pathToEntry": "index.cjs",
+      "printInfoCmd": [
+        "--help"
+      ],
+      "isExecutable": false
     }
   }
 }

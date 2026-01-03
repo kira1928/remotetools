@@ -1,6 +1,6 @@
 ## 轻量 Makefile：仅作为入口调用 build.go，实现跨平台构建
 
-.PHONY: all build debug release build-all install test clean run help
+.PHONY: all build dev release build-all install test clean run help build-web
 
 BUILD_TAGS := buildtool
 GO_RUN := go run -tags $(BUILD_TAGS) ./build.go
@@ -17,8 +17,8 @@ help:
 build:
 	$(GO_RUN) build $(PLATFORM_FLAGS)
 
-debug:
-	$(GO_RUN) debug $(PLATFORM_FLAGS)
+dev:
+	$(GO_RUN) dev $(PLATFORM_FLAGS)
 
 release:
 	$(GO_RUN) release $(PLATFORM_FLAGS)
@@ -37,3 +37,8 @@ clean:
 
 run:
 	$(GO_RUN) run
+
+
+# 构建前端 Web UI
+build-web:
+	cd web && npm install && npm run build

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"runtime"
 	"testing"
 )
 
@@ -58,3 +60,51 @@ func TestGetLatestVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestOsArchSpecificString_Unmarshal_String(t *testing.T) {
+	var s OsArchSpecificString
+	data := []byte(`"https://example.com/a.zip"`)
+	if err := s.UnmarshalJSON(data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Primary() != "https://example.com/a.zip" {
+		t.Fatalf("Primary mismatch: %s", s.Primary())
+	}
+	if len(s.Values) != 1 || s.Values[0] != s.Primary() {
+		t.Fatalf("Values mismatch: %#v", s.Values)
+	}
+}
+
+func TestOsArchSpecificString_Unmarshal_Array(t *testing.T) {
+	var s OsArchSpecificString
+	data := []byte(`["https://a/1.zip", "https://b/1.zip"]`)
+	if err := s.UnmarshalJSON(data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Primary() != "https://a/1.zip" {
+		t.Fatalf("first value mismatch: %s", s.Primary())
+	}
+	if len(s.Values) != 2 || s.Values[1] != "https://b/1.zip" {
+		t.Fatalf("Values mismatch: %#v", s.Values)
+	}
+}
+
+func TestOsArchSpecificString_Unmarshal_MapLeafArray(t *testing.T) {
+	var s OsArchSpecificString
+	// 构造包含当前 GOOS/GOARCH 的数组
+	jsonTmpl := `{"%s": {"%s": ["https://primary/%s/%s.zip", "https://mirror/%s/%s.zip"]}}`
+	payload := []byte(
+		sprintf(jsonTmpl, runtimeGOOS(), runtimeGOARCH(), runtimeGOOS(), runtimeGOARCH(), runtimeGOOS(), runtimeGOARCH()),
+	)
+	if err := s.UnmarshalJSON(payload); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Primary() == "" || len(s.Values) != 2 {
+		t.Fatalf("invalid parsed values: primary=%q, values=%#v", s.Primary(), s.Values)
+	}
+}
+
+// runtimeGOOS/ARCH 封装，便于测试用字符串拼接
+func runtimeGOOS() string                       { return runtime.GOOS }
+func runtimeGOARCH() string                     { return runtime.GOARCH }
+func sprintf(f string, a ...interface{}) string { return fmt.Sprintf(f, a...) }
