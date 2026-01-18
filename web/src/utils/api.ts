@@ -81,6 +81,7 @@ export interface ActiveTasksResponse {
 }
 
 const client = axios.create({
+  baseURL: './',
   timeout: 15000
 });
 

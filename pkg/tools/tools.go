@@ -458,6 +458,15 @@ const (
 
 // GetToolAuto gets a tool with automatic version selection based on the strategy
 func (p *API) GetToolAuto(toolName string, strategy AutoVersionStrategy) (tool Tool, err error) {
+	// 优先检查开发工具覆盖
+	if devPath := GetDevToolOverride(toolName); devPath != "" {
+		devTool := NewDevTool(toolName, devPath)
+		if devTool.DoesToolExist() {
+			return devTool, nil
+		}
+		// 开发覆盖路径无效，继续使用正常流程
+	}
+
 	// First check if there's a direct match (single version case)
 	ok := false
 	p.toolMu.RLock()

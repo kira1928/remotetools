@@ -196,7 +196,7 @@ export default function App() {
     [fetchGroups, fetchRuntime, refreshActiveFlag, toolGroups]
   );
 
-  useSSE('/api/progress', handleProgressMessage, {
+  useSSE('./api/progress', handleProgressMessage, {
     enabled: activeSSE,
     onError: (event) => {
       console.error('sse error', event);

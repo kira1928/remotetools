@@ -9,6 +9,7 @@ const __dirname = dirname(__filename);
 // 构建产物输出到后端静态目录，保持与现有服务兼容。
 export default defineConfig({
   plugins: [react()],
+  base: './', // 使用相对路径，方便反向代理访问
   server: {
     port: 5173,
     host: '0.0.0.0',

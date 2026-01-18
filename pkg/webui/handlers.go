@@ -138,6 +138,10 @@ func (s *WebUIServer) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/tool-info", handleToolInfo)
 	mux.HandleFunc("/api/tool-metadata", handleToolMetadata)
 	mux.HandleFunc("/api/platform", handlePlatform)
+	mux.HandleFunc("/api/registered-tools", handleRegisteredTools)
+
+	// 工具 Web UI 代理路由
+	mux.HandleFunc("/tool/", handleToolProxy)
 
 	// Serve static files
 	frontendSubFS, err := fs.Sub(frontendFS, "frontend")
@@ -593,4 +597,11 @@ func handlePlatform(w http.ResponseWriter, r *http.Request) {
 	p := plat{Platform: runtime.GOOS + "/" + runtime.GOARCH}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(p)
+}
+
+// handleRegisteredTools 返回已注册 Web UI 的工具列表
+func handleRegisteredTools(w http.ResponseWriter, r *http.Request) {
+	tools := ListRegisteredTools()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string][]string{"tools": tools})
 }
