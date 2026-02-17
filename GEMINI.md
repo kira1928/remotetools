@@ -20,13 +20,13 @@
 
 ```bash
 # 使用 Go 构建脚本
-go run -tags buildtool ./build.go help
-go run -tags buildtool ./build.go build        # 构建当前平台
-go run -tags buildtool ./build.go dev          # Debug 构建
-go run -tags buildtool ./build.go release      # Release 构建
-go run -tags buildtool ./build.go build-all    # 构建全部平台产物
-go run -tags buildtool ./build.go test         # 运行测试
-go run -tags buildtool ./build.go clean        # 清理
+go run ./build.go help
+go run ./build.go build        # 构建当前平台
+go run ./build.go dev          # Debug 构建
+go run ./build.go release      # Release 构建
+go run ./build.go build-all    # 构建全部平台产物
+go run ./build.go test         # 运行测试
+go run ./build.go clean        # 清理
 
 # 或使用 Make（内部调用上述命令）
 make build

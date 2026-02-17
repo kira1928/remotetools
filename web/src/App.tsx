@@ -10,7 +10,8 @@ import {
   toggleToolGroup,
   installTool,
   uninstallTool,
-  pauseTool
+  pauseTool,
+  pinVersion
 } from '@/utils/api';
 import { buildToolKey } from '@/utils/format';
 import { useLocale } from '@/hooks/useLocale';
@@ -168,6 +169,19 @@ export default function App() {
     [fetchGroups, fetchRuntime, refreshActiveFlag, messageApi, t]
   );
 
+  const handlePinVersion = useCallback(
+    async (toolName: string, version: string) => {
+      try {
+        await pinVersion(toolName, version);
+        await fetchGroups();
+      } catch (err) {
+        console.error('pin version failed', err);
+        messageApi.error(t('pinFailed'));
+      }
+    },
+    [fetchGroups, messageApi, t]
+  );
+
   const handleProgressMessage = useCallback(
     async (event: MessageEvent<any>) => {
       try {
@@ -258,6 +272,7 @@ export default function App() {
                   onPause={handlePause}
                   onResume={handleResume}
                   onUninstall={handleUninstall}
+                  onPinVersion={handlePinVersion}
                   messageApi={messageApi}
                 />
               ))}

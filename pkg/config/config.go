@@ -197,6 +197,22 @@ func LoadConfigFromBytes(data []byte) (conf Config, err error) {
 	return
 }
 
+// MergeInto 将 other 中的所有 ToolConfig 合并到 c 中。
+// 如果同一个 key（toolName@version）在两边都存在，other 中的值会覆盖 c 中的值。
+// 返回被覆盖的 key 列表，便于调用方在 debug 模式下打印日志。
+func (c *Config) MergeInto(other Config) (overwritten []string) {
+	if c.ToolConfigs == nil {
+		c.ToolConfigs = make(map[string]*ToolConfig)
+	}
+	for key, cfg := range other.ToolConfigs {
+		if _, exists := c.ToolConfigs[key]; exists {
+			overwritten = append(overwritten, key)
+		}
+		c.ToolConfigs[key] = cfg
+	}
+	return
+}
+
 // GetLatestVersion returns the latest version string from a list of versions
 // It uses semantic version comparison (e.g., "8.0.5" > "8.0.4")
 func GetLatestVersion(versions []string) string {

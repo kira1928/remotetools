@@ -33,14 +33,21 @@ func convertDownloadProcess(dp DownloadProcess) webui.ToolDownloadProcess {
 // ListToolGroups 返回分组后的工具信息，便于前端按组渲染。
 func (a *webuiAdapter) ListToolGroups() ([]webui.ToolGroupOverview, error) {
 	configs := a.api.getAllToolConfigs()
-	// snapshotMap 先存储组级启用状态，避免多次读取元数据。
-	snapshotMap := make(map[string]bool)
+	// snapshotMap 先存储组级启用状态和锁定版本，避免多次读取元数据。
+	type groupSnapshot struct {
+		enabled       bool
+		pinnedVersion string
+	}
+	snapshotMap := make(map[string]groupSnapshot)
 	for _, snap := range a.api.ListToolGroups() {
 		name := strings.TrimSpace(snap.ToolName)
 		if name == "" {
 			continue
 		}
-		snapshotMap[name] = snap.IsEnabled
+		snapshotMap[name] = groupSnapshot{
+			enabled:       snap.IsEnabled,
+			pinnedVersion: snap.PinnedVersion,
+		}
 	}
 
 	groups := make(map[string]*webui.ToolGroupOverview)
@@ -48,14 +55,18 @@ func (a *webuiAdapter) ListToolGroups() ([]webui.ToolGroupOverview, error) {
 		if g, ok := groups[name]; ok {
 			return g
 		}
-		enabled, ok := snapshotMap[name]
-		if !ok {
-			enabled = true
+		snap, ok := snapshotMap[name]
+		enabled := true
+		pinned := ""
+		if ok {
+			enabled = snap.enabled
+			pinned = snap.pinnedVersion
 		}
 		grp := &webui.ToolGroupOverview{
-			Name:    name,
-			Enabled: enabled,
-			Tools:   make([]webui.ToolInfo, 0, 4),
+			Name:          name,
+			Enabled:       enabled,
+			PinnedVersion: pinned,
+			Tools:         make([]webui.ToolInfo, 0, 4),
 		}
 		groups[name] = grp
 		return grp
@@ -101,9 +112,9 @@ func (a *webuiAdapter) ListToolGroups() ([]webui.ToolGroupOverview, error) {
 	}
 
 	// 确保存在纯元数据定义的组也能展示出来（即便当前无版本）。
-	for name, enabled := range snapshotMap {
+	for name, snap := range snapshotMap {
 		grp := ensureGroup(name)
-		grp.Enabled = enabled
+		grp.Enabled = snap.enabled
 	}
 
 	results := make([]webui.ToolGroupOverview, 0, len(groups))
@@ -119,9 +130,9 @@ func (a *webuiAdapter) ListToolGroups() ([]webui.ToolGroupOverview, error) {
 			return vi < vj
 		})
 		enabled := grp.Enabled
-		if snapEnabled, ok := snapshotMap[grp.Name]; ok {
-			enabled = snapEnabled
-			grp.Enabled = snapEnabled
+		if snap, ok := snapshotMap[grp.Name]; ok {
+			enabled = snap.enabled
+			grp.Enabled = snap.enabled
 		}
 		for i := range grp.Tools {
 			grp.Tools[i].Enabled = enabled
@@ -251,6 +262,16 @@ func (a *webuiAdapter) SetToolGroupEnabled(toolName string, enabled bool) error 
 // SetToolEnabled 兼容旧接口，内部转发到工具组级别的开关。
 func (a *webuiAdapter) SetToolEnabled(toolName, _ string, enabled bool) error {
 	return a.SetToolGroupEnabled(toolName, enabled)
+}
+
+// SetToolGroupPinnedVersion 设置工具组的锁定版本。
+func (a *webuiAdapter) SetToolGroupPinnedVersion(toolName string, version string) error {
+	return a.api.SetToolGroupPinnedVersion(toolName, version)
+}
+
+// GetToolGroupPinnedVersion 获取工具组当前锁定的版本。
+func (a *webuiAdapter) GetToolGroupPinnedVersion(toolName string) string {
+	return a.api.GetToolGroupPinnedVersion(toolName)
 }
 
 // GetToolMetadata 返回格式化的元数据 JSON 字符串

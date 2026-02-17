@@ -2,8 +2,7 @@
 
 .PHONY: all build dev release build-all install test clean run help build-web
 
-BUILD_TAGS := buildtool
-GO_RUN := go run -tags $(BUILD_TAGS) ./build.go
+GO_RUN := go run ./build.go
 
 # 如果用户在命令行设置了 GOOS/GOARCH，则透传给 build.go（可选）
 PLATFORM_FLAGS := $(if $(GOOS), -os $(GOOS),) $(if $(GOARCH), -arch $(GOARCH),)

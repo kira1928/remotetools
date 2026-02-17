@@ -28,6 +28,7 @@ export interface ToolInfo {
 export interface ToolGroup {
   name: string;
   enabled: boolean;
+  pinnedVersion?: string;
   tools: ToolInfo[];
 }
 
@@ -140,4 +141,9 @@ export async function fetchToolMetadata(toolName: string, version: string): Prom
 export async function fetchActiveFlag(): Promise<boolean> {
   const { data } = await client.get<ActiveTasksResponse>('/api/active');
   return !!data?.needsSSE;
+}
+
+// 设置工具组的锁定版本，空字符串表示取消锁定
+export async function pinVersion(toolName: string, version: string): Promise<void> {
+  await client.post('/api/pin-version', { toolName, version });
 }

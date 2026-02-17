@@ -37,9 +37,10 @@ type ToolInfo struct {
 
 // ToolGroupOverview 汇总同名工具的不同版本信息。
 type ToolGroupOverview struct {
-	Name    string     `json:"name"`
-	Enabled bool       `json:"enabled"`
-	Tools   []ToolInfo `json:"tools"`
+	Name          string     `json:"name"`
+	Enabled       bool       `json:"enabled"`
+	PinnedVersion string     `json:"pinnedVersion,omitempty"`
+	Tools         []ToolInfo `json:"tools"`
 }
 
 // ToolDownloadProcess 表示下载进度的快照信息
@@ -102,6 +103,10 @@ type APIAdapter interface {
 	ListActiveInstalls() []string
 	// SetToolGroupEnabled 切换工具组启用状态
 	SetToolGroupEnabled(toolName string, enabled bool) error
+	// SetToolGroupPinnedVersion 设置工具组的锁定版本，空字符串表示取消锁定
+	SetToolGroupPinnedVersion(toolName string, version string) error
+	// GetToolGroupPinnedVersion 获取工具组当前锁定的版本
+	GetToolGroupPinnedVersion(toolName string) string
 }
 
 var (
@@ -139,6 +144,7 @@ func (s *WebUIServer) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/tool-metadata", handleToolMetadata)
 	mux.HandleFunc("/api/platform", handlePlatform)
 	mux.HandleFunc("/api/registered-tools", handleRegisteredTools)
+	mux.HandleFunc("/api/pin-version", handlePinVersion)
 
 	// 工具 Web UI 代理路由
 	mux.HandleFunc("/tool/", handleToolProxy)
@@ -604,4 +610,43 @@ func handleRegisteredTools(w http.ResponseWriter, r *http.Request) {
 	tools := ListRegisteredTools()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string][]string{"tools": tools})
+}
+
+// PinVersionRequest 用于设置/取消工具组锁定版本
+type PinVersionRequest struct {
+	ToolName string `json:"toolName"`
+	Version  string `json:"version"` // 空字符串表示取消锁定
+}
+
+// handlePinVersion 处理版本锁定/解锁请求
+func handlePinVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if apiAdapter == nil {
+		http.Error(w, "API not initialized", http.StatusInternalServerError)
+		return
+	}
+	var req PinVersionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ToolName == "" {
+		http.Error(w, "toolName is required", http.StatusBadRequest)
+		return
+	}
+	if err := apiAdapter.SetToolGroupPinnedVersion(req.ToolName, req.Version); err != nil {
+		http.Error(w, "Failed to set pinned version: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	status := "unpinned"
+	if req.Version != "" {
+		status = "pinned to " + req.Version
+	}
+	if _, err := w.Write([]byte(status)); err != nil {
+		return
+	}
 }

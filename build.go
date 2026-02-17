@@ -1,4 +1,4 @@
-//go:build buildtool
+//go:build ignore
 
 package main
 

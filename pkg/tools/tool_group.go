@@ -10,16 +10,20 @@ import (
 	"sync"
 )
 
-// ToolGroupMetadata 表示工具组级别的元数据，只记录必要的启用状态。
+// ToolGroupMetadata 表示工具组级别的元数据，记录启用状态和版本锁定信息。
 type ToolGroupMetadata struct {
 	ToolName  string `json:"toolName"`
 	IsEnabled bool   `json:"isEnabled"`
+	// PinnedVersion 锁定使用的版本。为空表示使用自动版本选择策略。
+	// 设置后，GetToolAuto 会优先使用此版本（如果该版本在配置中存在）。
+	PinnedVersion string `json:"pinnedVersion,omitempty"`
 }
 
 // ToolGroupSnapshot 用于向外部暴露工具组的关键信息。
 type ToolGroupSnapshot struct {
-	ToolName  string `json:"toolName"`
-	IsEnabled bool   `json:"isEnabled"`
+	ToolName      string `json:"toolName"`
+	IsEnabled     bool   `json:"isEnabled"`
+	PinnedVersion string `json:"pinnedVersion,omitempty"`
 }
 
 // ToolGroup 管理同名不同版本工具的共享状态（例如启用/禁用）。
@@ -120,7 +124,11 @@ func (g *ToolGroup) Snapshot() ToolGroupSnapshot {
 	g.metadataMu.Lock()
 	defer g.metadataMu.Unlock()
 	if meta, err := g.ensureMetadataLocked(); err == nil && meta != nil {
-		return ToolGroupSnapshot{ToolName: meta.ToolName, IsEnabled: meta.IsEnabled}
+		return ToolGroupSnapshot{
+			ToolName:      meta.ToolName,
+			IsEnabled:     meta.IsEnabled,
+			PinnedVersion: meta.PinnedVersion,
+		}
 	}
 	return ToolGroupSnapshot{ToolName: g.name, IsEnabled: true}
 }
@@ -128,4 +136,31 @@ func (g *ToolGroup) Snapshot() ToolGroupSnapshot {
 // Name 返回工具组名称。
 func (g *ToolGroup) Name() string {
 	return g.name
+}
+
+// GetPinnedVersion 返回当前锁定的版本；为空表示未锁定。
+func (g *ToolGroup) GetPinnedVersion() string {
+	g.metadataMu.Lock()
+	defer g.metadataMu.Unlock()
+	meta, err := g.ensureMetadataLocked()
+	if err != nil || meta == nil {
+		return ""
+	}
+	return meta.PinnedVersion
+}
+
+// SetPinnedVersion 设置锁定版本。传入空字符串表示取消锁定。
+// 仅当值发生变化时才写入磁盘。
+func (g *ToolGroup) SetPinnedVersion(version string) error {
+	g.metadataMu.Lock()
+	defer g.metadataMu.Unlock()
+	meta, err := g.ensureMetadataLocked()
+	if err != nil {
+		return err
+	}
+	if meta.PinnedVersion == version {
+		return nil
+	}
+	meta.PinnedVersion = version
+	return g.persistLocked()
 }

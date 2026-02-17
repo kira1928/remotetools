@@ -440,6 +440,51 @@ func (p *API) LoadConfigFromBytes(data []byte) (err error) {
 	return
 }
 
+// MergeConfig 从文件加载配置并合并到现有配置中。
+// 如果同一个 toolName@version 在两个来源中都存在，后加载的覆盖先加载的。
+func (p *API) MergeConfig(path string) error {
+	newConf, err := config.LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	overwritten := p.config.MergeInto(newConf)
+	for _, key := range overwritten {
+		log.Printf("[remotetools] 配置覆盖: %s 被新配置源替换", key)
+	}
+	return nil
+}
+
+// MergeConfigFromBytes 从字节数据加载配置并合并到现有配置中。
+// 如果同一个 toolName@version 在两个来源中都存在，后加载的覆盖先加载的。
+func (p *API) MergeConfigFromBytes(data []byte) error {
+	newConf, err := config.LoadConfigFromBytes(data)
+	if err != nil {
+		return err
+	}
+	overwritten := p.config.MergeInto(newConf)
+	for _, key := range overwritten {
+		log.Printf("[remotetools] 配置覆盖: %s 被新配置源替换", key)
+	}
+	return nil
+}
+
+// AddToolConfig 直接将一个 ToolConfig 添加到当前配置中。
+// 使用 toolName@version 作为 key；如果同 key 已存在则覆盖。
+// 这是比 MergeConfigFromBytes 更轻量的方式，无需经过 JSON 序列化。
+func (p *API) AddToolConfig(cfg *config.ToolConfig) {
+	if cfg == nil {
+		return
+	}
+	if p.config.ToolConfigs == nil {
+		p.config.ToolConfigs = make(map[string]*config.ToolConfig)
+	}
+	key := cfg.ToolName + "@" + cfg.Version
+	if _, exists := p.config.ToolConfigs[key]; exists {
+		log.Printf("[remotetools] 配置覆盖: %s 被新条目替换", key)
+	}
+	p.config.ToolConfigs[key] = cfg
+}
+
 func (p *API) GetTool(toolName string) (tool Tool, err error) {
 	return p.GetToolAuto(toolName, AutoVersionPreferInstalled)
 }
@@ -465,6 +510,18 @@ func (p *API) GetToolAuto(toolName string, strategy AutoVersionStrategy) (tool T
 			return devTool, nil
 		}
 		// 开发覆盖路径无效，继续使用正常流程
+	}
+
+	// 检查工具组是否锁定了特定版本（PinnedVersion）
+	// PinnedVersion 优先级高于任何自动版本策略
+	group := p.getOrCreateToolGroup(toolName)
+	if pinned := group.GetPinnedVersion(); pinned != "" {
+		pinnedKey := toolName + "@" + pinned
+		if _, ok := p.getToolConfigByKey(pinnedKey); ok {
+			return p.GetToolWithVersion(toolName, pinned)
+		}
+		// 锁定版本在配置中不存在，打印警告并回退到正常策略
+		log.Printf("[remotetools] 警告: 工具 %s 锁定版本 %s 在配置中不存在，回退到自动版本选择", toolName, pinned)
 	}
 
 	// First check if there's a direct match (single version case)
@@ -643,6 +700,34 @@ func (p *API) SetToolGroupEnabled(toolName string, enabled bool) error {
 // SetToolEnabled 兼容旧接口，内部转发到工具组级别的开关。
 func (p *API) SetToolEnabled(toolName, _ string, enabled bool) error {
 	return p.SetToolGroupEnabled(toolName, enabled)
+}
+
+// SetToolGroupPinnedVersion 设置工具组的锁定版本。
+// 传入空字符串表示取消锁定，恢复自动版本选择。
+func (p *API) SetToolGroupPinnedVersion(toolName string, version string) error {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return fmt.Errorf("tool name is required")
+	}
+	group := p.getOrCreateToolGroup(name)
+	if group == nil {
+		return fmt.Errorf("tool group %s not found", name)
+	}
+	return group.SetPinnedVersion(version)
+}
+
+// GetToolGroupPinnedVersion 获取工具组当前锁定的版本。
+// 返回空字符串表示未锁定。
+func (p *API) GetToolGroupPinnedVersion(toolName string) string {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return ""
+	}
+	group := p.getOrCreateToolGroup(name)
+	if group == nil {
+		return ""
+	}
+	return group.GetPinnedVersion()
 }
 
 // IsToolGroupEnabled 返回整组工具当前是否处于启用状态。

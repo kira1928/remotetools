@@ -20,13 +20,13 @@
 直接使用 Go：
 
 ```bash
-go run -tags buildtool ./build.go help
-go run -tags buildtool ./build.go build        # 构建当前平台
-go run -tags buildtool ./build.go dev          # 开发构建（包含调试信息）
-go run -tags buildtool ./build.go release      # Release 构建（优化）
-go run -tags buildtool ./build.go build-all    # 构建全部平台产物
-go run -tags buildtool ./build.go test         # 运行测试
-go run -tags buildtool ./build.go clean        # 清理
+go run ./build.go help
+go run ./build.go build        # 构建当前平台
+go run ./build.go dev          # 开发构建（包含调试信息）
+go run ./build.go release      # Release 构建（优化）
+go run ./build.go build-all    # 构建全部平台产物
+go run ./build.go test         # 运行测试
+go run ./build.go clean        # 清理
 ```
 
 或继续使用 Make（内部调用上述命令）：
@@ -43,7 +43,7 @@ make build-all
 - GOOS/GOARCH 环境变量可通过 `make build` 透传，也可用 `go run` 方式传入 `-os/-arch`。
   例如：
   - `GOOS=linux GOARCH=amd64 make build`
-  - `go run -tags buildtool ./build.go build -os linux -arch amd64`
+  - `go run ./build.go build -os linux -arch amd64`
 
 ## 快速开始
 

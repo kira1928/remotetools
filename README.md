@@ -20,13 +20,13 @@ The repository uses a cross-platform Go build script `build.go`; the Makefile is
 Directly with Go:
 
 ```bash
-go run -tags buildtool ./build.go help
-go run -tags buildtool ./build.go build        # Build for current platform
-go run -tags buildtool ./build.go dev          # Development build with debug info
-go run -tags buildtool ./build.go release      # Release build (optimized)
-go run -tags buildtool ./build.go build-all    # Build for all target platforms
-go run -tags buildtool ./build.go test         # Run tests
-go run -tags buildtool ./build.go clean        # Clean artifacts
+go run ./build.go help
+go run ./build.go build        # Build for current platform
+go run ./build.go dev          # Development build with debug info
+go run ./build.go release      # Release build (optimized)
+go run ./build.go build-all    # Build for all target platforms
+go run ./build.go test         # Run tests
+go run ./build.go clean        # Clean artifacts
 ```
 
 Or continue to use Make (which calls the above under the hood):
@@ -43,7 +43,7 @@ Optional parameters:
 - You can pass GOOS/GOARCH via make, or use `-os/-arch` with `go run`.
   Examples:
   - `GOOS=linux GOARCH=amd64 make build`
-  - `go run -tags buildtool ./build.go build -os linux -arch amd64`
+  - `go run ./build.go build -os linux -arch amd64`
 
 ## Quick Start
 

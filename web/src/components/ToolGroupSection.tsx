@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { Card, Space, Switch, Typography, Button, Tag, Tooltip, Divider } from 'antd';
+import { Card, Space, Switch, Typography, Button, Tag, Tooltip, Divider, Select } from 'antd';
 import { PauseCircleOutlined, PlayCircleOutlined, DownloadOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
 import type { MessageInstance } from 'antd/es/message/interface';
 import type { ToolGroup, ToolRuntimeStatus, ProgressMessage, ToolInfo } from '@/utils/api';
@@ -26,6 +26,7 @@ interface ToolGroupSectionProps {
   onPause: (toolName: string, version: string) => Promise<void>;
   onResume: (toolName: string, version: string) => Promise<void>;
   onUninstall: (toolName: string, version: string) => Promise<void>;
+  onPinVersion: (toolName: string, version: string) => Promise<void>;
   messageApi: MessageInstance;
 }
 
@@ -47,6 +48,7 @@ export function ToolGroupSection({
   onPause,
   onResume,
   onUninstall,
+  onPinVersion,
   messageApi
 }: ToolGroupSectionProps) {
   const { t } = useLocale();
@@ -126,6 +128,31 @@ export function ToolGroupSection({
   const toggleExpand = useCallback(() => {
     setExpanded((prev) => !prev);
   }, []);
+
+  const [pinLoading, setPinLoading] = useState(false);
+
+  // 处理锁定版本变更
+  const handlePinChange = useCallback(async (version: string) => {
+    setPinLoading(true);
+    try {
+      await onPinVersion(group.name, version);
+      messageApi.success(version ? t('pinSuccess') : t('unpinSuccess'));
+    } catch {
+      messageApi.error(t('pinFailed'));
+    } finally {
+      setPinLoading(false);
+    }
+  }, [group.name, messageApi, onPinVersion, t]);
+
+  // 构建版本选项列表
+  const versionOptions = useMemo(() => {
+    const opts = toolStates.map((state) => ({
+      label: state.tool.version,
+      value: state.tool.version,
+    }));
+    opts.unshift({ label: t('unpinned'), value: '' });
+    return opts;
+  }, [toolStates, t]);
 
   const handleGroupInstall = useCallback(async () => {
     if (!pendingStates.length) {
@@ -210,6 +237,18 @@ export function ToolGroupSection({
           <>
             <Divider style={{ margin: '8px 0' }} />
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              {/* 锁定版本选择器 */}
+              <section>
+                <Typography.Text strong>{t('pinnedVersion')}:</Typography.Text>
+                <Select
+                  value={group.pinnedVersion || ''}
+                  options={versionOptions}
+                  onChange={handlePinChange}
+                  loading={pinLoading}
+                  style={{ width: 200, marginLeft: 8 }}
+                  size="small"
+                />
+              </section>
               {installedStates.length > 0 && (
                 <section>
                   <Typography.Text strong>{t('installedVersions')}:</Typography.Text>
