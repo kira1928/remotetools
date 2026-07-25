@@ -80,12 +80,20 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [groups] = await Promise.all([
-        fetchGroups(),
+      // 工具定义是页面渲染所必需的数据；运行状态、平台和 SSE 标记均可降级。
+      // 某个辅助接口暂时失败时仍应展示工具列表，避免整页变成空白错误页。
+      const groups = await fetchGroups();
+      void Promise.allSettled([
         fetchRuntime(),
         fetchPlatform().then(setPlatform),
         refreshActiveFlag()
-      ]);
+      ]).then((results) => {
+        results.forEach((result, index) => {
+          if (result.status === 'rejected') {
+            console.error(`initial secondary request ${index} failed`, result.reason);
+          }
+        });
+      });
       if (groups.length === 0) {
         setProgressMap({});
       }

@@ -950,7 +950,11 @@ func (p *DownloadedTool) Uninstall() error {
 	return baseErr
 }
 
-// GetPartialDownloadInfo returns downloaded size of temp file and last known total size
+// GetPartialDownloadInfo 返回本地部分下载文件大小和已记录的总大小。
+//
+// 该方法会在 Web UI 的状态查询路径中被调用，因此必须保持为纯本地操作。
+// 下载源的 HEAD 探测由实际下载流程负责，不能在状态查询时同步访问网络，
+// 否则单个不可达的下载源就会阻塞整个工具列表。
 func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
 	metaProcess := p.GetDownloadProcess()
 	// 支持多 URL：尝试找到任意一个对应的临时文件
@@ -967,7 +971,7 @@ func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
 				tmpPath = candidate
 				break
 			}
-			// 记录首个候选，若都不存在则仍使用第一个用于 HEAD 获取 total
+			// 记录首个候选，若都不存在则仍用它作为本地文件路径。
 			if tmpPath == "" {
 				tmpPath = candidate
 			}
@@ -987,35 +991,7 @@ func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
 			existingSize = stat.Size()
 		}
 	}
-	// 优先返回已记录的总大小
-	total := metaProcess.FileSize
-	if total == 0 {
-		// 通过第一个可用 URL 尝试 HEAD
-		var headURL string
-		if len(urls) > 0 {
-			headURL = urls[0]
-		} else {
-			headURL = p.getDownloadUrl()
-		}
-		if headURL != "" {
-			client := &http.Client{}
-			if req, herr := http.NewRequest("HEAD", headURL, nil); herr == nil {
-				if resp, herr2 := client.Do(req); herr2 == nil {
-					if resp != nil {
-						defer resp.Body.Close()
-					}
-					if resp.StatusCode == http.StatusOK {
-						if cl := resp.Header.Get("Content-Length"); cl != "" {
-							if s, perr := strconv.ParseInt(cl, 10, 64); perr == nil {
-								total = s
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	return existingSize, total, nil
+	return existingSize, metaProcess.FileSize, nil
 }
 
 // Pause signals the current download loop to stop gracefully
