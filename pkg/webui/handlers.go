@@ -90,7 +90,7 @@ type APIAdapter interface {
 	ListToolGroups() ([]ToolGroupOverview, error)
 	InstallTool(toolName, version string, progressCallback func(ProgressMessage)) error
 	UninstallTool(toolName, version string) error
-	// GetDownloadInfo returns partial download information (bytes and total) for a tool version
+	// GetDownloadInfo 返回工具版本的下载字节数和总大小。
 	GetDownloadInfo(toolName, version string) (int64, int64, error)
 	// PauseTool requests pausing current download if in progress
 	PauseTool(toolName, version string) error
