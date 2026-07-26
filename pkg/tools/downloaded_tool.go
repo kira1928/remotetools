@@ -950,8 +950,9 @@ func (p *DownloadedTool) Uninstall() error {
 	return baseErr
 }
 
-// GetPartialDownloadInfo returns downloaded size of temp file and last known total size
-func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
+// GetCachedDownloadInfo 返回本地部分下载文件大小和已记录的总大小。
+// 该方法只访问内存与本地文件系统，适合 Web UI 等延迟敏感的状态查询。
+func (p *DownloadedTool) GetCachedDownloadInfo() (int64, int64, error) {
 	metaProcess := p.GetDownloadProcess()
 	// 支持多 URL：尝试找到任意一个对应的临时文件
 	toolFolder := p.GetWritableToolFolder()
@@ -967,7 +968,7 @@ func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
 				tmpPath = candidate
 				break
 			}
-			// 记录首个候选，若都不存在则仍使用第一个用于 HEAD 获取 total
+			// 记录首个候选，若都不存在则仍用它作为本地文件路径。
 			if tmpPath == "" {
 				tmpPath = candidate
 			}
@@ -987,32 +988,48 @@ func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
 			existingSize = stat.Size()
 		}
 	}
-	// 优先返回已记录的总大小
-	total := metaProcess.FileSize
-	if total == 0 {
-		// 通过第一个可用 URL 尝试 HEAD
-		var headURL string
-		if len(urls) > 0 {
-			headURL = urls[0]
-		} else {
-			headURL = p.getDownloadUrl()
-		}
-		if headURL != "" {
-			client := &http.Client{}
-			if req, herr := http.NewRequest("HEAD", headURL, nil); herr == nil {
-				if resp, herr2 := client.Do(req); herr2 == nil {
-					if resp != nil {
-						defer resp.Body.Close()
-					}
-					if resp.StatusCode == http.StatusOK {
-						if cl := resp.Header.Get("Content-Length"); cl != "" {
-							if s, perr := strconv.ParseInt(cl, 10, 64); perr == nil {
-								total = s
-							}
-						}
-					}
-				}
-			}
+	return existingSize, metaProcess.FileSize, nil
+}
+
+// GetPartialDownloadInfo 返回部分下载文件大小和总大小。
+//
+// 为保持既有公开方法的行为，当本地元数据没有记录总大小时，此方法会通过
+// HEAD 请求尝试获取远端文件大小。延迟敏感的调用方应使用
+// GetCachedDownloadInfo，避免被不可达的下载源阻塞。
+func (p *DownloadedTool) GetPartialDownloadInfo() (int64, int64, error) {
+	existingSize, total, err := p.GetCachedDownloadInfo()
+	if err != nil || total > 0 {
+		return existingSize, total, err
+	}
+
+	urls := p.getDownloadUrls()
+	var headURL string
+	if len(urls) > 0 {
+		headURL = urls[0]
+	} else {
+		headURL = p.getDownloadUrl()
+	}
+	if headURL == "" {
+		return existingSize, 0, nil
+	}
+
+	// 保留既有方法的远端探测行为；需要快速响应的调用方应使用缓存版本。
+	client := &http.Client{}
+	req, reqErr := http.NewRequest(http.MethodHead, headURL, nil)
+	if reqErr != nil {
+		return existingSize, 0, nil
+	}
+	resp, requestErr := client.Do(req)
+	if requestErr != nil {
+		return existingSize, 0, nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return existingSize, 0, nil
+	}
+	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+		if size, parseErr := strconv.ParseInt(contentLength, 10, 64); parseErr == nil {
+			total = size
 		}
 	}
 	return existingSize, total, nil

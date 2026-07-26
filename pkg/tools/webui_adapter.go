@@ -200,15 +200,16 @@ func (a *webuiAdapter) UninstallTool(toolName, version string) error {
 	return tool.Uninstall()
 }
 
-// GetDownloadInfo returns partial download information
+// GetDownloadInfo 返回部分下载的本地状态，不执行远端请求。
 func (a *webuiAdapter) GetDownloadInfo(toolName, version string) (int64, int64, error) {
 	tool, err := a.api.GetToolWithVersion(toolName, version)
 	if err != nil {
 		return 0, 0, err
 	}
-	// Only support DownloadedTool for partial download
+	// Web UI 状态查询必须保持为纯本地操作，远端尺寸会在实际下载开始后
+	// 通过进度元数据和 SSE 更新。
 	if dt, ok := tool.(*DownloadedTool); ok {
-		return dt.GetPartialDownloadInfo()
+		return dt.GetCachedDownloadInfo()
 	}
 	return 0, 0, nil
 }

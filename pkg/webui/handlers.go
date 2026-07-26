@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 //go:embed frontend/*
@@ -89,7 +90,7 @@ type APIAdapter interface {
 	ListToolGroups() ([]ToolGroupOverview, error)
 	InstallTool(toolName, version string, progressCallback func(ProgressMessage)) error
 	UninstallTool(toolName, version string) error
-	// GetDownloadInfo returns partial download information (bytes and total) for a tool version
+	// GetDownloadInfo 返回工具版本的下载字节数和总大小。
 	GetDownloadInfo(toolName, version string) (int64, int64, error)
 	// PauseTool requests pausing current download if in progress
 	PauseTool(toolName, version string) error
@@ -121,6 +122,8 @@ var (
 	// Global API adapter
 	apiAdapter APIAdapter
 )
+
+const sseHeartbeatInterval = 15 * time.Second
 
 // SetAPIAdapter sets the global API adapter
 func SetAPIAdapter(adapter APIAdapter) {
@@ -290,6 +293,16 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// http.Server 的全局 WriteTimeout 适合普通 API，但会从请求开始时计时并截断
+	// 长连接 SSE。只为当前响应清除写截止时间，避免降低其他接口的超时保护。
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	// Create client channel
 	clientChan := make(chan ProgressMessage, 10)
 
@@ -306,6 +319,14 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 		close(clientChan)
 	}()
 
+	// 注册完成后立即发送响应头，既不遗漏连接建立期间的进度，也避免浏览器
+	// 在首条进度消息之前一直等待响应。
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
+
 	// Send progress updates
 	for {
 		select {
@@ -317,9 +338,13 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 				return
 			}
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
+			flusher.Flush()
+		case <-heartbeat.C:
+			// SSE 注释不会触发前端 message 事件，仅用于维持中间代理连接。
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
 			}
+			flusher.Flush()
 		case <-r.Context().Done():
 			return
 		}
